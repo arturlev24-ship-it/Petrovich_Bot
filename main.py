@@ -684,14 +684,27 @@ async def cmd_top(message: Message):
     if not user_karma:
         await safe_send_message(message, "Пока никто не заработал карму! Будьте активнее! 🏃‍♂️")
         return
-
+    
     sorted_users = sorted(user_karma.items(), key=lambda x: x[1], reverse=True)[:10]
     top_text = "🏆 <b>ТОП-10 участников:</b>\n\n"
-
+    
     medals = ["🥇", "🥈", "🥉"] + [f"{i}️⃣" for i in range(4, 11)]
+    
     for i, (user_id, karma) in enumerate(sorted_users):
-        top_text += f"{medals[i]} ID{user_id}: <b>{karma}</b> кармы\n"
-
+        # Пытаемся получить информацию о пользователе
+        try:
+            user = await bot.get_chat(user_id)
+            # Используем username, если есть, иначе имя
+            if user.username:
+                name = f"@{user.username}"
+            else:
+                name = user.first_name
+        except:
+            # Если не удалось получить инфо — показываем ID
+            name = f"ID{user_id}"
+        
+        top_text += f"{medals[i]} {name}: <b>{karma}</b> кармы\n"
+    
     await safe_send_message(message, top_text)
 
 @dp.message(Command("stats"))
