@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Токен бота (можно взять из переменной окружения)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Файл для хранения кармы
 KARMA_FILE = "user_karma.json"
