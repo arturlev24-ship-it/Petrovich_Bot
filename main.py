@@ -7,8 +7,7 @@ import json
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
@@ -29,6 +28,46 @@ KARMA_FILE = "user_karma.json"
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+# ============================================
+# MIDDLEWARE (ДОБАВИТЬ ПОСЛЕ ИНИЦИАЛИЗАЦИИ DP)
+# ============================================
+
+class ChatOnlyMiddleware(BaseMiddleware):
+    """Middleware для ограничения бота только групповыми чатами"""
+    
+    async def __call__(self, handler, event, data):
+        if isinstance(event, Message):
+            if event.chat.type == "private":
+                # Пропускаем только /start
+                if event.text and event.text.startswith('/start'):
+                    return await handler(event, data)
+                
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🚀 Добавить Петровича в чат",
+                                url=f"https://t.me/{(await bot.me()).username}?startgroup=true"
+                            )
+                        ]
+                    ]
+                )
+                
+                await event.answer(
+                    "⚠️ Я работаю только в групповых чатах!\n\n"
+                    "Нажми на кнопку ниже, чтобы добавить меня в чат и начать веселье! 🎉",
+                    reply_markup=keyboard
+                )
+                return
+            
+            if event.chat.type in ["group", "supergroup"]:
+                return await handler(event, data)
+        
+        return await handler(event, data)
+
+# Регистрируем middleware
+dp.message.middleware(ChatOnlyMiddleware())
 
 # Словарь для отслеживания последнего сообщения от пользователей
 last_message_time = {}
@@ -87,22 +126,21 @@ async def auto_save_karma():
         await asyncio.sleep(600)  # Каждые 10 минут
         save_karma()
 
-async def safe_send_message(message: Message, text: str, reply: bool = False):
+async def safe_send_message(message: Message, text: str, reply: bool = False, reply_markup=None):
     """Безопасная отправка сообщения с обработкой ошибок"""
     try:
         if reply:
-            await message.reply(text)
+            await message.reply(text, reply_markup=reply_markup)
         else:
-            await message.answer(text)
+            await message.answer(text, reply_markup=reply_markup)
     except TelegramRetryAfter as e:
         logger.warning(f"Flood control: ждем {e.retry_after} секунд")
         await asyncio.sleep(e.retry_after)
-        # Повторная попытка
         try:
             if reply:
-                await message.reply(text)
+                await message.reply(text, reply_markup=reply_markup)
             else:
-                await message.answer(text)
+                await message.answer(text, reply_markup=reply_markup)
         except TelegramAPIError as e2:
             logger.error(f"Повторная ошибка отправки: {e2}")
     except TelegramAPIError as e:
