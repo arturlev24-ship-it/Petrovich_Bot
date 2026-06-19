@@ -680,7 +680,7 @@ async def cmd_karma(message: Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
-    """Топ пользователей по карме"""
+    """Топ пользователей по карме с отображением имён"""
     if not user_karma:
         await safe_send_message(message, "Пока никто не заработал карму! Будьте активнее! 🏃‍♂️")
         return
@@ -691,19 +691,27 @@ async def cmd_top(message: Message):
     medals = ["🥇", "🥈", "🥉"] + [f"{i}️⃣" for i in range(4, 11)]
     
     for i, (user_id, karma) in enumerate(sorted_users):
-        # Пытаемся получить информацию о пользователе
-        try:
-            user = await bot.get_chat(user_id)
-            # Используем username, если есть, иначе имя
-            if user.username:
-                name = f"@{user.username}"
-            else:
-                name = user.first_name
-        except:
-            # Если не удалось получить инфо — показываем ID
-            name = f"ID{user_id}"
+        # Пытаемся получить имя пользователя
+        name = user_names.get(user_id)
         
-        top_text += f"{medals[i]} {name}: <b>{karma}</b> кармы\n"
+        # Если имени нет в кеше, пробуем получить через API
+        if not name:
+            try:
+                user = await bot.get_chat(user_id)
+                # Используем username если есть, иначе имя
+                name = f"@{user.username}" if user.username else user.first_name
+                # Сохраняем в кеш
+                user_names[user_id] = name
+            except:
+                name = f"Пользователь {user_id}"
+        
+        # Форматируем вывод: если username, показываем @username
+        if name.startswith('@'):
+            display_name = name
+        else:
+            display_name = name
+        
+        top_text += f"{medals[i]} {display_name}: <b>{karma}</b> кармы\n"
     
     await safe_send_message(message, top_text)
 
