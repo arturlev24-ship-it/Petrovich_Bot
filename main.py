@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Настройка логирования
 logging.basicConfig(
@@ -599,11 +599,11 @@ jokes = [
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    """Приветственное сообщение"""
+    """Приветственное сообщение с кнопкой добавления в чат"""
     
     # Проверяем, личный это чат или группа
     if message.chat.type == "private":
-        # Это личные сообщения
+        # Это личные сообщения — показываем кнопку
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -618,23 +618,16 @@ async def cmd_start(message: Message):
         await safe_send_message(
             message,
             f"🎉 <b>Привет! Я Петрович — душа компании!</b>\n\n"
-            f"Нажми на кнопку ниже, чтобы добавить меня в групповой чат!\n\n"
-            f"А здесь, в личке, я не работаю 😢\n"
-            f"Моя стихия — это групповые чаты!"
+            f"Нажми на кнопку ниже, чтобы добавить меня в групповой чат и начать веселье!",
+            reply_markup=keyboard
         )
-        # Добавляем клавиатуру отдельно
-        await message.answer("👇 Жми на кнопку:", reply_markup=keyboard)
     else:
-        # Это группа — обычное приветствие
+        # Это группа — обычное приветствие без кнопок
         await safe_send_message(
             message,
             f"🎉 Всем привет! Я Петрович, душа этого чата!\n\n"
-            f"🤖 <b>Что я умею:</b>\n"
-            f"• Реагирую на 300+ слов-триггеров\n"
-            f"• Приветствую новеньких\n"
-            f"• Кидаю факты, шутки и комплименты\n"
-            f"• Считаю карму участников\n\n"
-            f"📋 Команды: /help"
+            f"Пишите слова, а я буду реагировать! У меня 300+ ответов!\n"
+            f"Команды: /help"
         )
 
 @dp.message(Command("help"))
