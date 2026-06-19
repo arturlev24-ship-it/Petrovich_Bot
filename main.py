@@ -11,6 +11,7 @@ from aiogram.types import Message
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Настройка логирования
 logging.basicConfig(
