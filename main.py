@@ -599,24 +599,42 @@ jokes = [
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Приветственное сообщение"""
-    await safe_send_message(message,
-        f"🎉 Всем привет! Я Петрович, душа этого чата!\n\n"
-        f"🤖 <b>Что я умею:</b>\n"
-        f"• Реагирую на 300+ слов-триггеров\n"
-        f"• Приветствую новеньких\n"
-        f"• Кидаю факты, шутки и комплименты\n"
-        f"• Считаю карму участников\n"
-        f"• Сохраняю статистику\n\n"
-        f"📋 <b>Команды:</b>\n"
-        f"/compliment - получить комплимент\n"
-        f"/fact - интересный факт\n"
-        f"/joke - свежая шутка\n"
-        f"/karma - твоя карма в чате\n"
-        f"/top - топ участников по карме\n"
-        f"/stats - статистика чата\n"
-        f"/help - список команд\n\n"
-        f"💬 Просто общайтесь, а я буду оживлять чат! 😄"
-    )
+    
+    # Проверяем, личный это чат или группа
+    if message.chat.type == "private":
+        # Это личные сообщения
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚀 Добавить Петровича в чат",
+                        url=f"https://t.me/{(await bot.me()).username}?startgroup=true"
+                    )
+                ]
+            ]
+        )
+        
+        await safe_send_message(
+            message,
+            f"🎉 <b>Привет! Я Петрович — душа компании!</b>\n\n"
+            f"Нажми на кнопку ниже, чтобы добавить меня в групповой чат!\n\n"
+            f"А здесь, в личке, я не работаю 😢\n"
+            f"Моя стихия — это групповые чаты!"
+        )
+        # Добавляем клавиатуру отдельно
+        await message.answer("👇 Жми на кнопку:", reply_markup=keyboard)
+    else:
+        # Это группа — обычное приветствие
+        await safe_send_message(
+            message,
+            f"🎉 Всем привет! Я Петрович, душа этого чата!\n\n"
+            f"🤖 <b>Что я умею:</b>\n"
+            f"• Реагирую на 300+ слов-триггеров\n"
+            f"• Приветствую новеньких\n"
+            f"• Кидаю факты, шутки и комплименты\n"
+            f"• Считаю карму участников\n\n"
+            f"📋 Команды: /help"
+        )
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
