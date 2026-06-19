@@ -33,6 +33,7 @@ dp = Dispatcher()
 last_message_time = {}
 # Словарь для "кармы" пользователей
 user_karma = {}
+user_names = {}
 # Счетчик сообщений для статистики
 message_count = 0
 # Время запуска бота
