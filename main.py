@@ -1,3 +1,8 @@
+"""
+Петрович - весёлый чат-бот для оживления беседы
+Версия: 2.1
+"""
+
 import asyncio
 import random
 import logging
@@ -8,37 +13,118 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
-# Настройка логирования
+# ============================================
+# НАСТРОЙКИ
+# ============================================
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Токен бота (можно взять из переменной окружения)
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logger.info("Файл .env загружен")
+except ImportError:
+    logger.warning("python-dotenv не установлен")
 
-# Файл для хранения кармы
-KARMA_FILE = "user_karma.json"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+KARMA_FILE = os.getenv("KARMA_FILE", "user_karma.json")
+AUTO_SAVE_INTERVAL = int(os.getenv("AUTO_SAVE_INTERVAL", "600"))
+CLEANUP_INTERVAL = int(os.getenv("CLEANUP_INTERVAL", "3600"))
 
-# Инициализация бота и диспетчера
+# ============================================
+# ИНИЦИАЛИЗАЦИЯ
+# ============================================
+
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
+last_message_time = {}
+user_karma = {}
+user_names = {}
+message_count = 0
+start_time = datetime.now()
+
 # ============================================
-# MIDDLEWARE (ДОБАВИТЬ ПОСЛЕ ИНИЦИАЛИЗАЦИИ DP)
+# ФУНКЦИИ ДЛЯ РАБОТЫ С КАРМОЙ
+# ============================================
+
+def save_karma():
+    try:
+        karma_to_save = {str(k): v for k, v in user_karma.items()}
+        with open(KARMA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(karma_to_save, f, ensure_ascii=False, indent=2)
+        logger.debug(f"Карма сохранена: {len(user_karma)} пользователей")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения кармы: {e}")
+
+def load_karma():
+    global user_karma
+    try:
+        if os.path.exists(KARMA_FILE):
+            with open(KARMA_FILE, 'r', encoding='utf-8') as f:
+                karma_from_file = json.load(f)
+                user_karma = {int(k): v for k, v in karma_from_file.items()}
+            logger.info(f"Карма загружена: {len(user_karma)} пользователей")
+        else:
+            logger.info("Файл кармы не найден, начинаем с нуля")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки кармы: {e}")
+        user_karma = {}
+
+async def cleanup_old_data():
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL)
+        now = datetime.now()
+        cleaned = 0
+        for user_id in list(last_message_time.keys()):
+            if (now - last_message_time[user_id]) > timedelta(hours=24):
+                del last_message_time[user_id]
+                cleaned += 1
+        save_karma()
+        if cleaned > 0:
+            logger.info(f"Очистка: удалено {cleaned} старых записей")
+
+async def auto_save_karma():
+    while True:
+        await asyncio.sleep(AUTO_SAVE_INTERVAL)
+        save_karma()
+
+async def safe_send_message(message: Message, text: str, reply: bool = False, reply_markup=None):
+    try:
+        if reply:
+            await message.reply(text, reply_markup=reply_markup)
+        else:
+            await message.answer(text, reply_markup=reply_markup)
+    except TelegramRetryAfter as e:
+        logger.warning(f"Flood control: ждем {e.retry_after} секунд")
+        await asyncio.sleep(e.retry_after)
+        try:
+            if reply:
+                await message.reply(text, reply_markup=reply_markup)
+            else:
+                await message.answer(text, reply_markup=reply_markup)
+        except TelegramAPIError as e2:
+            logger.error(f"Повторная ошибка отправки: {e2}")
+    except TelegramAPIError as e:
+        logger.error(f"Ошибка отправки сообщения: {e}")
+
+# ============================================
+# MIDDLEWARE ДЛЯ ОГРАНИЧЕНИЯ БОТА ГРУППАМИ
 # ============================================
 
 class ChatOnlyMiddleware(BaseMiddleware):
-    """Middleware для ограничения бота только групповыми чатами"""
-    
     async def __call__(self, handler, event, data):
         if isinstance(event, Message):
-            if event.chat.type == "private":
+            # Для личных сообщений
+            if event.chat.type == ChatType.PRIVATE:
                 # Пропускаем только /start
                 if event.text and event.text.startswith('/start'):
                     return await handler(event, data)
@@ -61,96 +147,18 @@ class ChatOnlyMiddleware(BaseMiddleware):
                 )
                 return
             
-            if event.chat.type in ["group", "supergroup"]:
-                return await handler(event, data)
+            # Для групп и супергрупп — пропускаем ВСЁ
+            if event.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                return await handler(event, data)
         
-return await handler(event, data)
+        return await handler(event, data)
 
-# Регистрируем middleware
 dp.message.middleware(ChatOnlyMiddleware())
 
-# Словарь для отслеживания последнего сообщения от пользователей
-last_message_time = {}
-# Словарь для "кармы" пользователей
-user_karma = {}
-user_names = {}
-# Счетчик сообщений для статистики
-message_count = 0
-# Время запуска бота
-start_time = datetime.now()
-
 # ============================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С КАРМОЙ
+# БАЗЫ ДАННЫХ
 # ============================================
 
-def save_karma():
-    """Сохраняет карму в файл"""
-    try:
-        # Конвертируем ключи в строки для JSON
-        karma_to_save = {str(k): v for k, v in user_karma.items()}
-        with open(KARMA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(karma_to_save, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Ошибка сохранения кармы: {e}")
-
-def load_karma():
-    """Загружает карму из файла"""
-    global user_karma
-    try:
-        if os.path.exists(KARMA_FILE):
-            with open(KARMA_FILE, 'r', encoding='utf-8') as f:
-                karma_from_file = json.load(f)
-                # Конвертируем ключи обратно в int
-                user_karma = {int(k): v for k, v in karma_from_file.items()}
-            logger.info(f"Карма загружена: {len(user_karma)} пользователей")
-    except Exception as e:
-        logger.error(f"Ошибка загрузки кармы: {e}")
-        user_karma = {}
-
-async def cleanup_old_data():
-    """Периодическая очистка старых записей"""
-    while True:
-        await asyncio.sleep(3600)  # Каждый час
-        now = datetime.now()
-        # Удаляем записи старше 24 часов
-        for user_id in list(last_message_time.keys()):
-            if (now - last_message_time[user_id]) > timedelta(hours=24):
-                del last_message_time[user_id]
-        # Сохраняем карму
-        save_karma()
-        logger.info("Очистка старых данных и сохранение кармы выполнены")
-
-async def auto_save_karma():
-    """Автосохранение кармы каждые 10 минут"""
-    while True:
-        await asyncio.sleep(600)  # Каждые 10 минут
-        save_karma()
-
-async def safe_send_message(message: Message, text: str, reply: bool = False, reply_markup=None):
-    """Безопасная отправка сообщения с обработкой ошибок"""
-    try:
-        if reply:
-            await message.reply(text, reply_markup=reply_markup)
-        else:
-            await message.answer(text, reply_markup=reply_markup)
-    except TelegramRetryAfter as e:
-        logger.warning(f"Flood control: ждем {e.retry_after} секунд")
-        await asyncio.sleep(e.retry_after)
-        try:
-            if reply:
-                await message.reply(text, reply_markup=reply_markup)
-            else:
-                await message.answer(text, reply_markup=reply_markup)
-        except TelegramAPIError as e2:
-            logger.error(f"Повторная ошибка отправки: {e2}")
-    except TelegramAPIError as e:
-        logger.error(f"Ошибка отправки сообщения: {e}")
-
-# ============================================
-# БАЗЫ ДАННЫХ (КОНСТАНТЫ)
-# ============================================
-
-# Фразы для приветствия новых участников
 welcome_phrases = [
     "Опа, {name}! Заходи, не стесняйся, тут все свои! 🎉",
     "{name} ворвался в чат! Прячьте печеньки! 🍪",
@@ -169,12 +177,7 @@ welcome_phrases = [
     "Легенда гласит, что {name} наконец-то здесь! 📜"
 ]
 
-# ============================================
-# ГИГАНТСКАЯ БАЗА ТРИГГЕРОВ (300+ ОТВЕТОВ)
-# ============================================
-
 triggers = {
-    # Приветствия
     r"привет": [
         "Привет-привет! Как жизнь молодая? 😊",
         "О, здарова! Давно не виделись! 👋",
@@ -187,20 +190,6 @@ triggers = {
         "Привет, бро! Чего нового расскажешь? 🤜🤛",
         "Хай! Ты пропустил всё самое интересное! 🎪"
     ],
-    r"здаров|здарова|здравствуй|хелло|хай|салют|ку\b": [
-        "И тебе не хворать! 😄",
-        "Здарова-здарова! Как оно? 🤙",
-        "Ку-ку, мой друг! Рад видеть! 🐦",
-        "Приветствую! Чем порадуешь? 🎁",
-        "Ого, да ты полиглот! И тебе здарова! 🌍",
-        "Хай-хай! Ты сегодня просто огонь! 🔥",
-        "Салют, командир! Всё пучком? 🫡",
-        "Ку! Я Петрович, будем знакомы! 🤝",
-        "Здравствуй, свет мой ясный! ✨",
-        "Привет, ковбой! Как прерии? 🤠"
-    ],
-
-    # Прощания
     r"пока|до\s+свидания|прощай|бай|гудбай|увидимся|спокойной": [
         "Куда?! Мы же только начали тусить! 😢",
         "Пока-пока! Не пропадай надолго! 👋",
@@ -215,8 +204,6 @@ triggers = {
         "Возвращайся скорее! Я тут без тебя заскучаю! 😿",
         "Покасики! Ты лучший! 🌟"
     ],
-
-    # Благодарности
     r"спасибо|спс|благодарю|сяб|сяп|спасиб|мерси|thanks|thx": [
         "Всегда пожалуйста! Обращайся в любое время! 😎",
         "Не за что! Я ж Петрович — душа компании! 🫶",
@@ -229,24 +216,6 @@ triggers = {
         "Не стоит благодарности! Просто будь счастлив! 😊",
         "Всегда рад! Ты крутой, не забывай! 🏆"
     ],
-
-    # Грусть и поддержка
-    r"грустно|печаль|тоска|депресс|плохо|хреново|устал|тяжело|плачу|одиноко": [
-        "Эй, не грусти! Лови виртуальную обнимашку! 🫂",
-        "Грусть — это временно! Счастье — навсегда! 🌈",
-        "Выше нос! Ты справишься со всем! 💪",
-        "Обнимаю тебя через экран! Всё будет хорошо! 🤗",
-        "Помни: после дождя всегда выходит солнце! ☀️",
-        "Хочешь, расскажу анекдот? Может, улыбнешься? 😊",
-        "Ты не один! У тебя есть мы и Петрович! ❤️",
-        "Плохой день? Давай сделаем его лучше вместе! 🎈",
-        "Отдохни, выпей чаю, посмотри котиков! 🐱☕",
-        "Всё пройдет! И это тоже пройдет! Держись! 🕊️",
-        "Лови лучи добра! Ты заслуживаешь счастья! ✨",
-        "Сегодня грустно, но завтра будет новый день! 🌅"
-    ],
-
-    # Еда
     r"еда|кушать|жрать|голод|вкусн|пицца|бургер|суши|шаурма|рецепт|готовить": [
         "Ммм, еда! Я бы сейчас съел пиццу! 🍕",
         "Не напоминай! У меня слюнки текут! 🤤",
@@ -261,8 +230,6 @@ triggers = {
         "Пельмени! Русская классика! 🥟",
         "Еда объединяет людей! Давайте устроим пир! 🍽️"
     ],
-
-    # Работа и учеба
     r"работа|учёба|учеба|экзамен|дедлайн|начальник|коллега|офис|зарплата|уволился|совещание": [
         "Работа не волк! В лес не убежит! 😄",
         "Дедлайны — это адреналин для взрослых! 📅",
@@ -277,24 +244,6 @@ triggers = {
         "Совещание? Главное — не уснуть! 😴",
         "Работай в кайф, а не на износ! 💆‍♂️"
     ],
-
-    # Погода
-    r"погода|дождь|снег|холод|жара|ветер|солнц|гроза|туман|град": [
-        "Дождь? Самое время для пледа и какао! ☕🌧️",
-        "Снег идёт! Бежим лепить снеговика! ⛄",
-        "Холодно? Грейся обнимашками! 🫂",
-        "Жара! Кондиционер — лучший друг! 🥵",
-        "Солнце светит — жизнь прекрасна! ☀️",
-        "Гроза? Это природа спецэффекты включает! ⚡",
-        "В такую погоду только котиков гладить! 🐱",
-        "Туман? Ничего не вижу, но чувствую — ты рядом! 🌫️",
-        "Град? Прячь машины и головы! 🧊",
-        "Идеальная погода — когда дома! 🏠",
-        "Ветер перемен! Держи шляпу! 🎩💨",
-        "Погода шепчет: останься дома и смотри сериалы! 📺"
-    ],
-
-    # Животные
     r"кот|кошк|собак|пёс|щенок|хомяк|попуг|рыбк|черепах|ёж|лис|заяц|медвед|питомец": [
         "Котики правят миром! И интернетом! 🐱",
         "Собака — друг человека! Петрович — тоже друг! 🐕",
@@ -309,24 +258,6 @@ triggers = {
         "Медведь? Не буди во мне зверя! 🐻",
         "Питомцы — это семья! Кто у тебя есть? 🐾"
     ],
-
-    # Технологии
-    r"телефон|комп|ноут|интернет|вайфай|wi-fi|wifi|програм|айти|робот|ии|ai|смартфон|гаджет": [
-        "Компьютер глючит? Перезагрузка решает 90% проблем! 💻",
-        "Вайфай упал — жизнь остановилась! 📡",
-        "Программисты — современные волшебники! 🧙‍♂️",
-        "Искусственный интеллект? Я сам как ИИ! 🤖",
-        "Телефон разрядился? Паника! 😱",
-        "Люблю гаджеты! Особенно когда работают! ⚙️",
-        "Смартфон — продолжение руки! 📱",
-        "Роботы захватят мир? Я за! 🤖🌍",
-        "Обновление ПО? Надеюсь, ничего не сломается! 🔄",
-        "Кэш почистил — комп летает! 🚀",
-        "Бэкап сделать не забудь! Важное правило! 💾",
-        "Технологии делают жизнь проще... или сложнее? 🤔"
-    ],
-
-    # Игры
     r"игр|гейм|ps\b|playstation|xbox|steam|дота|кс\b|cs\b|контр[.]?страйк|майнкрафт|гта|gta|киберспорт|стрим": [
         "Геймер detected! Что проходишь? 🎮",
         "Дота? Это жизнь или боль? 🎯",
@@ -341,8 +272,6 @@ triggers = {
         "Пятница — время для гейминга! 🕹️",
         "Задротить или не задротить? Вот в чем вопрос! ⚔️"
     ],
-
-    # Музыка
     r"музык|песн|трек|альбом|концерт|пою|рок|рэп|джаз|классик|метал|попса": [
         "Музыка объединяет! Что слушаешь? 🎵",
         "У меня в наушниках играет... Что-то классное! 🎧",
@@ -357,24 +286,6 @@ triggers = {
         "Музыка лечит душу! Это факт! 💊",
         "Какой трек у тебя на репите? 🔁"
     ],
-
-    # Фильмы и сериалы
-    r"фильм|сериал|кино|нетфликс|netflix|аниме|мульт|трейлер|актёр|режиссёр|оскар": [
-        "Что смотришь? Нужен совет! 🎬",
-        "Нетфликс и чилл? Я за! 🍿",
-        "Анимешник? Уважаю! 🎌",
-        "Мультики — это не только для детей! 🎨",
-        "Какой последний фильм тебя впечатлил? 🤔",
-        "Оскар? Главное — не фильм, а эмоции! 🏆",
-        "Сериал смотрел до 3 утра? Знакомо! 😴📺",
-        "Трейлер круче самого фильма? Бывает! 🎥",
-        "Любимый актёр? У меня их много! 🌟",
-        "Режиссёрская версия всегда лучше! 🎞️",
-        "Кино под одеялом — идеальный вечер! 🛋️",
-        "Спойлеры — это зло! Не рассказывай! 🤫"
-    ],
-
-    # Спорт
     r"спорт|футбол|баскетбол|хоккей|теннис|тренир|качалк|фитнес|йог|бег|плаван": [
         "Спорт — это жизнь! 💪",
         "Футбол? За кого болеешь? ⚽",
@@ -389,177 +300,22 @@ triggers = {
         "Спортсмен? Дай пять! 🖐️",
         "Главное — движение! Вперед! 🚴"
     ],
-
-    # Путешествия
-    r"путешеств|поездк|отпуск|отдых|море|горы|туризм|билет|отель|пляж|экскурс": [
-        "Путешествия расширяют кругозор! ✈️",
-        "Море зовёт! Слышишь шум волн? 🌊",
-        "Горы — это свобода! 🏔️",
-        "Отпуск? Беру чемодан и лечу! 🧳",
-        "Куда бы ты хотел поехать? 🌍",
-        "Билеты купил? Пора паковаться! 🎫",
-        "Пляж, коктейль, закат... Мечта! 🍹🌅",
-        "Отель «всё включено»? Я за! 🏨",
-        "Экскурсии — это интересно! Но устаешь! 🚶",
-        "Туристом быть классно! Особенно с фотоаппаратом! 📸",
-        "Рюкзак на плечи — и в путь! 🎒",
-        "Путешествуй, пока молодой! Потом будет некогда! ⏰"
+    r"грустно|печаль|тоска|депресс|плохо|хреново|устал|тяжело|плачу|одиноко": [
+        "Эй, не грусти! Лови виртуальную обнимашку! 🫂",
+        "Грусть — это временно! Счастье — навсегда! 🌈",
+        "Выше нос! Ты справишься со всем! 💪",
+        "Обнимаю тебя через экран! Всё будет хорошо! 🤗",
+        "Помни: после дождя всегда выходит солнце! ☀️",
+        "Хочешь, расскажу анекдот? Может, улыбнешься? 😊",
+        "Ты не один! У тебя есть мы и Петрович! ❤️",
+        "Плохой день? Давай сделаем его лучше вместе! 🎈",
+        "Отдохни, выпей чаю, посмотри котиков! 🐱☕",
+        "Всё пройдет! И это тоже пройдет! Держись! 🕊️",
+        "Лови лучи добра! Ты заслуживаешь счастья! ✨",
+        "Сегодня грустно, но завтра будет новый день! 🌅"
     ],
-
-    # Любовь и отношения
-    r"любовь|люблю|отношен|свидан|романт|поцелуй|обнима|сердце|валентин|флирт": [
-        "Любовь витает в воздухе! Чувствуешь? 💕",
-        "Отношения — это работа! Но приятная! 💑",
-        "Свидание? Надень что-нибудь красивое! 👔",
-        "Романтика! Свечи, ужин, луна... 🕯️🌙",
-        "Поцелуи полезны для здоровья! 😘",
-        "Обнимашки лечат стресс! 🫂",
-        "Сердечко бьётся быстрее? Это любовь! 💓",
-        "Валентинка для тебя! Ты особенный! 💌",
-        "Флирт — это игра! Главное — не заиграться! 😏",
-        "Любовь с первого сообщения? Бывает! 💘",
-        "Ты достоин самого лучшего! Не забывай! ❤️",
-        "Счастье — это когда тебя понимают! 👫"
-    ],
-
-    # Праздники
-    r"праздник|день\s+рожден|др\b|новый\s+год|нг\b|пасх|маслениц|хэллоуин|8\s+март|23\s+феврал|поздрав": [
-        "С праздником! Ура! 🎉",
-        "День рождения? Подарки, торт, веселье! 🎂🎁",
-        "Новый год! Ёлка, мандарины, оливье! 🎄🍊",
-        "Скоро праздник? Начинаем готовиться! 🥳",
-        "Масленица! Блины — наше всё! 🥞",
-        "Хэллоуин! Тыквы и страшилки! 🎃",
-        "8 марта? Дарите цветы и улыбки! 💐",
-        "23 февраля? Защитникам — ура! 🫡",
-        "Пасха! Куличи и яйца! 🥚",
-        "Поздравляю от всей души! Будь счастлив! 🎊",
-        "Праздник — отличный повод для веселья! 🎈",
-        "Каждый день может быть праздником! ✨"
-    ],
-
-    # Мемы и интернет-культура
-    r"мем|мемас|рофл|лол|кек|ору\b|смех|ахах|лмао|кринж|вайб|треш|пранк": [
-        "Мемас залетел в чат! Держи ответку! 😂",
-        "ЛОЛ! Я тоже с этого мема ору! 🤣",
-        "Рофл года! Сохранил в коллекцию! 💾",
-        "Кринж detected! Уровень: максимальный! 📈",
-        "Вайб этого чата — лучший! ✌️",
-        "Кек! Ты жжешь! 🔥",
-        "Ору с тебя! В хорошем смысле! 😹",
-        "Ахахах! Ты поднял мне настроение! 📈",
-        "Это было эпично! В историю чата! 📜",
-        "Треш, угар и содомия! Как я люблю! 🎪",
-        "Пранк удался? Рассказывай! 🃏",
-        "Лмао! До слёз! 😭😂"
-    ],
-
-    # Сон и отдых
-    r"спать|сон|выспаться|кровать|подушка|одеяло|храп|бессонница|дремать|зевот": [
-        "Спать? Только после дедлайна! 😴",
-        "Кроватка ждёт! Мягкая подушка... 🛏️",
-        "Выспаться — это искусство! 🎨",
-        "Одеялко — лучший друг человека! 🛌",
-        "Храпишь? Не знаю, я не слышал! 😏",
-        "Бессонница? Считай овец! 🐑",
-        "Дремать на паре/работе? Классика! 😪",
-        "Зеваю за компанию! 🥱",
-        "Сон — для слабаков! Шучу, я тоже хочу спать! 🛋️",
-        "Кровать + сериал = идеальный вечер! 📺",
-        "Сладких снов! Пусть приснится чудо! 🌙",
-        "Не спать! Веселиться! А потом спать! 🎉😴"
-    ],
-
-    # Напитки
-    r"чай|кофе|капуч|латте|эспрессо|сок|вода|пиво|вино|коктейл|смузи|компот": [
-        "Чаёк? С плюшками? Я за! ☕",
-        "Кофе — топливо программистов и не только! ☕💻",
-        "Капучино с пенкой! Обожаю! 🤎",
-        "Эспрессо! Бодрит с одного глотка! ⚡",
-        "Вода — основа жизни! Пей больше! 💧",
-        "Пивко после работы? Уважаю! 🍺",
-        "Вино? Красное или белое? 🍷",
-        "Коктейль с зонтиком! Как на курорте! 🍹",
-        "Смузи — вкусно и полезно! 🥤",
-        "Компот! Бабушкин рецепт! 👵",
-        "Чай с имбирём — от всех болезней! 🫖",
-        "Что пьёшь? Угощай виртуально! 🥂"
-    ],
-
-    # Здоровье
-    r"болезнь|простуда|температура|головная боль|мигрень|таблетки|врачеб|аптеч": [
-        "Болеешь? Срочно чай с малиной и под одеяло! 🤒☕",
-        "Выздоравливай скорее! Весь чат за тебя переживает! ❤️‍🩹",
-        "Врачи — герои нашего времени! 👨‍⚕️",
-        "Таблетки — не конфетки! Помни об этом! 💊",
-        "Простуда — не повод грустить! Повод смотреть сериалы! 📺",
-        "Здоровье — главное богатство! Береги себя! 💪",
-        "Головная боль? Отдохни от экрана! 🤕",
-        "Аптечка всегда должна быть под рукой! 🏥"
-    ],
-
-    # Финансы
-    r"деньги|зарплата|кредит|ипотека|биткоин|крипта|валюта|доллар|евро|бюджет|накопить": [
-        "Деньги? Они приходят и уходят... а кушать хочется всегда! 💸",
-        "Зарплата пришла? Угости виртуальной пиццей! 🍕",
-        "Кредит — это зло! Но иногда необходимое! 🏦",
-        "Биткоин растёт? Я же говорил! 📈",
-        "Крипта — это американские горки! Держись крепче! 🎢",
-        "Копишь на мечту? Это правильно! 💰",
-        "Бюджет — это не скучно, это по-взрослому! 📊",
-        "Доллар скачет? А мы стабильны! 💪"
-    ],
-
-    # Хобби
-    r"хобби|увлечение|рисован|фотограф|вязание|коллекцион|моделирован": [
-        "Хобби — это отдушина! Расскажи о своём! 🎨",
-        "Рисование успокаивает нервы! Проверено! 🖌️",
-        "Фотография — остановить мгновение! 📸",
-        "Вязание? Свяжи мне шарфик! 🧶",
-        "Коллекционирование? Что собираешь? 🏆",
-        "Моделирование? Создавай миры! 🎭",
-        "Творчество лечит душу! Продолжай! ✨",
-        "У каждого должно быть хобби! Это продлевает жизнь! 🌟"
-    ],
-
-    # Автомобили
-    r"машина|авто|тачка|бмв|мерседес|тойота|дтп|парковка|бензин|права|гаи": [
-        "Автомобиль — не роскошь, а средство передвижения! 🚗",
-        "БМВ или Мерседес? Главное — чтобы не ломался! 🔧",
-        "Пробки — это время для аудиокниг! 🎧",
-        "Парковка — квест для настоящих героев! 🅿️",
-        "Бензин дорожает? Пора на велик! 🚲",
-        "Права получил? Поздравляю с новым этапом! 🎉",
-        "ДТП — будь осторожен на дорогах! ⚠️",
-        "Техосмотр пройден? Едем! 🏁"
-    ],
-
-    # Космос и наука
-    r"космос|вселенная|звезды|планета|марс|луна|наука|телескоп|черная дыра|ракета": [
-        "Космос — это бесконечность! Завораживает! 🌌",
-        "Марс? Когда уже колонизация? 🚀",
-        "Звёзды такие красивые! Смотрел на небо сегодня? ⭐",
-        "Чёрная дыра? Надеюсь, нас не засосёт! 🕳️",
-        "Наука — это круто! Особенно астрономия! 🔭",
-        "Ракета Илона Маска? Следишь за новостями? 🚀",
-        "Луна сегодня особенно яркая! 🌙",
-        "Телескоп бы сейчас... Наблюдать за звёздами! 🔭✨"
-    ],
-
-    # Мода и стиль
-    r"мода|стиль|одежда|шмот|кроссовки|лук|бренд|показ|дизайнер": [
-        "Стиль — это способ сказать миру кто ты! 👔",
-        "Мода меняется, а классика вечна! 💫",
-        "Кроссовки — это база! Согласен? 👟",
-        "Лук огонь! Ты явно знаешь толк в стиле! 🔥",
-        "Бренды? Главное — чтобы было удобно! 🎽",
-        "Дизайнеры творят чудеса! 🎨",
-        "Одежда — это самовыражение! 🧥",
-        "Модный показ? А мы тут тоже дефиле устроим! 💃"
-    ]
 }
 
-# Комплименты для поднятия настроения
 compliments = [
     "Ты сегодня отлично выглядишь! Даже через интернет видно! 😎",
     "С тобой чат становится интереснее! 💫",
@@ -583,7 +339,6 @@ compliments = [
     "Ты как солнце — без тебя пасмурно! ☀️"
 ]
 
-# Факты для активности
 random_facts = [
     "Знаете ли вы, что утята считают первое, что видят, своей мамой? 🦆",
     "Интересный факт: бананы — это ягоды, а клубника — нет! 🍌",
@@ -607,7 +362,6 @@ random_facts = [
     "Лимон содержит больше сахара, чем клубника! 🍋"
 ]
 
-# Шутки
 jokes = [
     "Почему программисты путают Хэллоуин и Рождество? Потому что 31 OCT = 25 DEC! 😂",
     "Колобок повесился... Теперь он просто блин 🥞",
@@ -637,11 +391,7 @@ jokes = [
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    """Приветственное сообщение с кнопкой добавления в чат"""
-    
-    # Проверяем, личный это чат или группа
-    if message.chat.type == "private":
-        # Это личные сообщения — показываем кнопку
+    if message.chat.type == ChatType.PRIVATE:
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -660,7 +410,6 @@ async def cmd_start(message: Message):
             reply_markup=keyboard
         )
     else:
-        # Это группа — обычное приветствие без кнопок
         await safe_send_message(
             message,
             f"🎉 Всем привет! Я Петрович, душа этого чата!\n\n"
@@ -670,7 +419,6 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    """Помощь по командам"""
     await safe_send_message(message,
         "🤖 <b>Петрович к вашим услугам!</b>\n\n"
         "📋 <b>Команды:</b>\n"
@@ -680,40 +428,30 @@ async def cmd_help(message: Message):
         "/karma - узнать свою карму\n"
         "/top - топ участников\n"
         "/stats - статистика чата\n\n"
-        "💬 <b>Темы, на которые я реагирую (25+ категорий):</b>\n"
-        "приветствия • прощания • еда • работа • погода\n"
-        "животные • технологии • игры • музыка • фильмы\n"
-        "спорт • путешествия • любовь • праздники • мемы\n"
-        "сон • напитки • здоровье • финансы • хобби\n"
-        "авто • космос • мода • и многое другое!\n\n"
-        "🎯 Всего более <b>300 реакций</b> на разные слова!"
+        "💬 Просто общайтесь в чате, а я буду реагировать на слова!"
     )
 
 @dp.message(Command("compliment"))
 async def cmd_compliment(message: Message):
-    """Отправить случайный комплимент"""
     compliment = random.choice(compliments)
     await safe_send_message(message, f"💝 {compliment}")
 
 @dp.message(Command("fact"))
 async def cmd_fact(message: Message):
-    """Отправить случайный факт"""
     fact = random.choice(random_facts)
     await safe_send_message(message, f"🤓 {fact}")
 
 @dp.message(Command("joke"))
 async def cmd_joke(message: Message):
-    """Отправить случайную шутку"""
     joke = random.choice(jokes)
     await safe_send_message(message, f"😄 {joke}")
 
 @dp.message(Command("karma"))
 async def cmd_karma(message: Message):
-    """Показать карму пользователя"""
     user_id = message.from_user.id
     karma = user_karma.get(user_id, 0)
     name = message.from_user.first_name
-
+    
     if karma > 50:
         status = "👑 Король чата"
     elif karma > 30:
@@ -726,12 +464,11 @@ async def cmd_karma(message: Message):
         status = "👋 Новый друг"
     else:
         status = "🌱 Только знакомимся"
-
+    
     await safe_send_message(message, f"{name}, твоя карма: <b>{karma}</b> очков\nСтатус: {status}")
 
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
-    """Топ пользователей по карме с отображением имён"""
     if not user_karma:
         await safe_send_message(message, "Пока никто не заработал карму! Будьте активнее! 🏃‍♂️")
         return
@@ -742,49 +479,39 @@ async def cmd_top(message: Message):
     medals = ["🥇", "🥈", "🥉"] + [f"{i}️⃣" for i in range(4, 11)]
     
     for i, (user_id, karma) in enumerate(sorted_users):
-        # Пытаемся получить имя пользователя
-        name = user_names.get(user_id)
-        
-        # Если имени нет в кеше, пробуем получить через API
-        if not name:
+        if user_id in user_names:
+            name = user_names[user_id]
+        else:
             try:
                 user = await bot.get_chat(user_id)
-                # Используем username если есть, иначе имя
-                name = f"@{user.username}" if user.username else user.first_name
-                # Сохраняем в кеш
-                user_names[user_id] = name
+                if user.username:
+                    name = f"@{user.username}"
+                    user_names[user_id] = name
+                else:
+                    name = user.first_name
+                    user_names[user_id] = name
             except:
-                name = f"Пользователь {user_id}"
+                name = f"ID{user_id}"
         
-        # Форматируем вывод: если username, показываем @username
-        if name.startswith('@'):
-            display_name = name
-        else:
-            display_name = name
-        
-        top_text += f"{medals[i]} {display_name}: <b>{karma}</b> кармы\n"
+        top_text += f"{medals[i]} {name}: <b>{karma}</b> кармы\n"
     
     await safe_send_message(message, top_text)
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
-    """Статистика бота"""
     uptime = datetime.now() - start_time
     hours, remainder = divmod(uptime.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-
+    
     stats_text = (
         "📊 <b>Статистика Петровича:</b>\n\n"
         f"⏱ Время работы: {uptime.days}д {hours}ч {minutes}м\n"
         f"💬 Обработано сообщений: <b>{message_count}</b>\n"
         f"👥 Пользователей с кармой: <b>{len(user_karma)}</b>\n"
-        f"🎯 Категорий триггеров: <b>25+</b>\n"
-        f"📝 Всего реакций: <b>300+</b>\n"
-        f"💾 Сохранение кармы: каждые 10 минут\n"
-        f"🧹 Автоочистка: каждый час\n\n"
+        f"📝 Всего реакций: <b>100+</b>\n\n"
         "🤖 Петрович работает стабильно!"
     )
-
+    
     await safe_send_message(message, stats_text)
 
 # ============================================
@@ -794,33 +521,70 @@ async def cmd_stats(message: Message):
 @dp.message(F.new_chat_members)
 async def new_member(message: Message):
     """Приветствие новых участников"""
+    logger.info(f"🎉 Событие: новые участники в чате {message.chat.id}")
+    
     for new_member in message.new_chat_members:
+        logger.info(f"👤 Новый участник: {new_member.full_name} (ID: {new_member.id})")
+        
+        # Сохраняем имя в кеш
+        if new_member.username:
+            user_names[new_member.id] = f"@{new_member.username}"
+        else:
+            user_names[new_member.id] = new_member.first_name or new_member.full_name
+        
+        # Если это сам бот
         if new_member.id == bot.id:
-            await safe_send_message(message,
-                "Всем привет! Я Петрович, ваш новый любимчик! 🎉\n"
-                "Пишите слова, а я буду реагировать! У меня 300+ ответов!\n"
+            logger.info("🤖 Это я! Приветствую чат")
+            await message.answer(
+                "🎉 Всем привет! Я Петрович, ваш новый любимчик!\n"
+                "Пишите слова, а я буду реагировать! У меня 100+ ответов!\n"
                 "Команды: /help"
             )
             continue
-
-        name = new_member.first_name
+        
+        # Приветствуем нового участника
+        name = new_member.first_name or new_member.full_name
         welcome = random.choice(welcome_phrases).format(name=name)
-        await safe_send_message(message, welcome)
+        
+        try:
+            await message.answer(welcome)
+            logger.info(f"✅ Приветствие отправлено: {name}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки приветствия для {name}: {e}")
+        
+        # Начисляем бонусную карму
         user_karma[new_member.id] = user_karma.get(new_member.id, 0) + 5
+        logger.info(f"💰 Бонусная карма для {name}: +5")
 
 @dp.message(F.left_chat_member)
 async def left_member(message: Message):
     """Прощание с ушедшими участниками"""
-    if message.left_chat_member.id != bot.id:
-        name = message.left_chat_member.first_name
-        farewells = [
-            f"Эх, {name} ушел... Вернись, я все прощу! 😢",
-            f"{name} покинул чат. Свободу попугаям! 🦜",
-            f"Прощай, {name}! Без тебя будет скучно... 👋",
-            f"{name} слился... Чат понес невосполнимую потерю! 😔",
-            f"Пока, {name}! Заходи если что! Двери открыты! 🚪"
-        ]
-        await safe_send_message(message, random.choice(farewells))
+    left_user = message.left_chat_member
+    
+    # Игнорируем если бот сам вышел
+    if left_user.id == bot.id:
+        logger.info("Бот был удалён из чата")
+        return
+    
+    logger.info(f"👋 Участник покинул чат: {left_user.full_name}")
+    
+    name = left_user.first_name or left_user.full_name
+    farewells = [
+        f"Эх, {name} ушёл... Вернись, я всё прощу! 😢",
+        f"{name} покинул чат. Свободу попугаям! 🦜",
+        f"Прощай, {name}! Без тебя будет скучно... 👋",
+        f"{name} слился... Чат понёс невосполнимую потерю! 😔",
+        f"Пока, {name}! Заходи если что! Двери открыты! 🚪",
+        f"Куда же ты, {name}? А как же наша дружба? 💔",
+        f"{name} ушёл в закат... 🌅",
+        f"Грустно... {name} покинул нас. Но мы не плачем! 🥲"
+    ]
+    
+    try:
+        await message.answer(random.choice(farewells))
+        logger.info(f"✅ Прощание отправлено для {name}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки прощания для {name}: {e}")
 
 # ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
@@ -828,36 +592,39 @@ async def left_member(message: Message):
 
 @dp.message(F.text)
 async def handle_messages(message: Message):
-    """Обработка текстовых сообщений"""
     global message_count
-
-    # Игнорируем сообщения от ботов (включая себя)
+    
+    # Игнорируем сообщения от ботов
     if message.from_user.is_bot:
         return
-
+    
     # Пропускаем команды
     if message.text and message.text.startswith('/'):
         return
-
-    # Проверяем, что сообщение текстовое и не пустое
+    
     if not message.text:
         return
-
-    # Увеличиваем счетчик сообщений
+    
     message_count += 1
-
+    
     user_id = message.from_user.id
     current_time = datetime.now()
-
+    
+    # Сохраняем имя пользователя в кеш
+    if message.from_user.username:
+        user_names[user_id] = f"@{message.from_user.username}"
+    else:
+        user_names[user_id] = message.from_user.first_name
+    
     # Начисляем карму (не чаще раза в минуту)
     if user_id not in last_message_time or \
        (current_time - last_message_time[user_id]) > timedelta(minutes=1):
         user_karma[user_id] = user_karma.get(user_id, 0) + 1
         last_message_time[user_id] = current_time
-
+    
     text_lower = message.text.lower()
-
-    # Проверяем все триггеры
+    
+    # Проверяем триггеры
     trigger_found = False
     for trigger, responses in triggers.items():
         if re.search(trigger, text_lower):
@@ -865,8 +632,8 @@ async def handle_messages(message: Message):
             await safe_send_message(message, response)
             trigger_found = True
             break
-
-    # Дополнительные реакции (только если триггер не сработал)
+    
+    # Дополнительные реакции
     if not trigger_found:
         # Реакция на длинные сообщения
         if len(message.text) > 200 and random.random() < 0.3:
@@ -878,7 +645,7 @@ async def handle_messages(message: Message):
                 "Вот это лонгрид! Респект за труд! 📝"
             ]
             await safe_send_message(message, random.choice(reactions))
-
+        
         # Реакция на много смайликов
         emoji_count = sum(1 for char in message.text if ord(char) > 1000)
         if emoji_count >= 5:
@@ -891,14 +658,9 @@ async def handle_messages(message: Message):
             ]
             await safe_send_message(message, random.choice(emoji_reactions))
 
-# ============================================
-# ЗАГЛУШКА ДЛЯ НЕОБРАБОТАННЫХ СООБЩЕНИЙ
-# ============================================
-
+# Заглушка для необработанных сообщений
 @dp.message()
 async def catch_all(message: Message):
-    """Перехватывает все необработанные сообщения"""
-    # Просто игнорируем, ничего не делаем
     pass
 
 # ============================================
@@ -906,32 +668,28 @@ async def catch_all(message: Message):
 # ============================================
 
 async def on_startup():
-    """Действия при запуске бота"""
-    # Загружаем карму
     load_karma()
     logger.info("Карма загружена")
-
-    # Запускаем фоновые задачи
+    
     asyncio.create_task(cleanup_old_data())
     asyncio.create_task(auto_save_karma())
     logger.info("Фоновые задачи запущены")
 
 async def main():
-    """Главная функция запуска"""
-    # Выполняем стартовые действия
     await on_startup()
-
-    logger.info("🤖 Петрович запускается с 300+ ответами...")
-
+    
+    logger.info("🤖 Петрович запускается...")
+    
     try:
-        # Запускаем поллинг
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=[
+            "message",
+            "chat_member",
+            "my_chat_member"
+        ])
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
-        # Сохраняем карму перед падением
         save_karma()
     finally:
-        # Сохраняем карму при остановке
         save_karma()
         logger.info("Бот остановлен, карма сохранена")
 
