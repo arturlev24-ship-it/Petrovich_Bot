@@ -334,17 +334,39 @@ async def handle_all(msg: Message):
     
     save_data()
 
-# Запуск
+# ============================================
+# ЗАПУСК
+# ============================================
+
 async def main():
+    """Главная функция запуска"""
+    # Загружаем данные
     load_data()
+    
+    # Запускаем автосохранение
     asyncio.create_task(auto_save())
+    
     logger.info("🤖 Палыч запускается...")
-    await dp.start_polling(bot)
+    logger.info(f"📊 Чатов: {len(stats['chats'])}, Пользователей: {len(stats['users'])}")
+    
+    # Удаляем вебхук и старые обновления
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("🔄 Вебхук удалён, старые обновления сброшены")
+    
+    # Запускаем поллинг
+    await dp.start_polling(
+        bot,
+        allowed_updates=dp.resolve_used_update_types(),
+        handle_as_tasks=True,
+        skip_updates=True
+    )
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Бот остановлен")
+        logger.info("👋 Бот остановлен вручную")
+        save_data()
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Критическая ошибка: {e}")
+        save_data()
