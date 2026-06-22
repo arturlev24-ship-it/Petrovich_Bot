@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот для оживления беседы
-Версия: 3.0
+Версия: 3.1
 """
 
 import asyncio
@@ -10,7 +10,6 @@ import re
 import os
 import json
 from datetime import datetime, timedelta
-from collections import defaultdict
 from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -53,17 +52,13 @@ dp = Dispatcher()
 data = {
     "stats": {
         "messages_answered": 0,
-        "users": {},        # {user_id: {"username": str, "messages": int}}
-        "chats": set()      # множество chat_id
+        "users": {},
+        "chats": set()
     }
 }
 
-# Кеш для быстрого доступа
-user_names = {}  # {user_id: "display_name"}
-processed_users_today = set()  # пользователи, которым уже начислены очки сегодня
-
 def save_data():
-    """Сохраняет все данные в JSON"""
+    """Сохраняет данные в JSON"""
     try:
         save_dict = {
             "stats": {
@@ -84,9 +79,9 @@ def load_data():
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
-                data["stats"]["messages_answered"] = loaded["stats"]["messages_answered"]
-                data["stats"]["users"] = loaded["stats"]["users"]
-                data["stats"]["chats"] = set(loaded["stats"]["chats"])
+                data["stats"]["messages_answered"] = loaded["stats"].get("messages_answered", 0)
+                data["stats"]["users"] = loaded["stats"].get("users", {})
+                data["stats"]["chats"] = set(loaded["stats"].get("chats", []))
             logger.info(f"✅ Данные загружены: {len(data['stats']['chats'])} чатов, {len(data['stats']['users'])} пользователей")
         else:
             logger.info("📁 Файл данных не найден, начинаем с нуля")
@@ -98,7 +93,6 @@ async def periodic_save():
     while True:
         await asyncio.sleep(300)
         save_data()
-        logger.debug("💾 Данные сохранены")
 
 async def safe_send(message: Message, text: str, reply_markup=None):
     """Безопасная отправка сообщения"""
@@ -119,6 +113,7 @@ async def safe_send(message: Message, text: str, reply_markup=None):
 # ============================================
 
 class GroupOnlyMiddleware(BaseMiddleware):
+    """Middleware для ограничения бота только группами"""
     async def __call__(self, handler, event, data):
         if isinstance(event, Message):
             if event.chat.type == ChatType.PRIVATE:
@@ -489,31 +484,25 @@ async def cmd_stats(message: Message):
         "📊 <b>СТАТИСТИКА ПАЛЫЧА:</b>\n\n"
         f"👥 Пользователей общается: <b>{total_users}</b>\n"
         f"💬 На сообщений ответил: <b>{total_answered}</b>\n"
-        f"💬 Всего сообщений в базе: <b>{sum(u['messages'] for u in data['stats']['users'].values())}</b>\n"
         f"📁 В скольких чатах: <b>{total_chats}</b>\n\n"
         "🤖 <b>Палыч работает стабильно!</b>"
     )
 
- ============================================
+# ============================================
 # СОБЫТИЯ ЧАТА
 # ============================================
 
 @dp.message(F.new_chat_members)
 async def on_user_join(message: Message):
     """Приветствие новых участников"""
-    logger.info(f"🔔 СРАБОТАЛ ОБРАБОТЧИК ВХОДА! Чат: {message.chat.id}")
-    logger.info(f"👥 Новых участников: {len(message.new_chat_members)}")
+    logger.info(f"🔔 ВХОД в чат {message.chat.id}")
     
     chat_id = message.chat.id
     data["stats"]["chats"].add(str(chat_id))
     save_data()
     
     for new_member in message.new_chat_members:
-        logger.info(f"👤 Участник: {new_member.full_name} (ID: {new_member.id})")
-        logger.info(f"🤖 Это бот? {new_member.id == bot.id}")
-        
         if new_member.id == bot.id:
-            logger.info("🤖 Бот зашёл в чат — отправляю приветствие")
             await message.answer(
                 "🎉 <b>Палыч в чате!</b>\n\n"
                 "Теперь этот чат оживёт!\n"
@@ -523,7 +512,6 @@ async def on_user_join(message: Message):
             continue
         
         name = new_member.first_name or new_member.full_name
-        logger.info(f"👋 Приветствую: {name}")
         welcomes = [
             f"Опа, {name}! Заходи, не стесняйся! Рассказывай о себе! 🎉",
             f"{name} ворвался в чат! Прячьте печеньки! Кто ты, {name}? 🍪",
@@ -534,18 +522,14 @@ async def on_user_join(message: Message):
             f"Ого, {name}! А мы тебя ждали! Где пропадал? 🤗",
             f"Салют, {name}! Чувствуй себя как дома! Рассказывай о себе! 🏠"
         ]
-        welcome_text = random.choice(welcomes)
-        logger.info(f"📤 Отправляю: {welcome_text}")
-        await message.answer(welcome_text)
+        await message.answer(random.choice(welcomes))
 
 @dp.message(F.left_chat_member)
 async def on_user_leave(message: Message):
     """Прощание с ушедшими"""
-    logger.info(f"🚪 СРАБОТАЛ ОБРАБОТЧИК ВЫХОДА! Чат: {message.chat.id}")
-    logger.info(f"👤 Ушёл: {message.left_chat_member.full_name} (ID: {message.left_chat_member.id})")
+    logger.info(f"🚪 ВЫХОД из чата {message.chat.id}")
     
     if message.left_chat_member.id == bot.id:
-        logger.info("🤖 Бота удалили из чата")
         return
     
     name = message.left_chat_member.first_name or message.left_chat_member.full_name
@@ -556,10 +540,9 @@ async def on_user_leave(message: Message):
         f"{name} слился... Чат понёс невосполнимую потерю! 😔",
         f"Пока, {name}! Заходи если что! Двери открыты! 🚪"
     ]
-    farewell_text = random.choice(farewells)
-    logger.info(f"📤 Отправляю: {farewell_text}")
-    await message.answer(farewell_text)
- ============================================
+    await message.answer(random.choice(farewells))
+
+# ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК
 # ============================================
 
@@ -572,7 +555,6 @@ async def handle_message(message: Message):
     if not message.text or message.text.startswith('/'):
         return
     
-    # Обновляем статистику
     chat_id = str(message.chat.id)
     user_id = str(message.from_user.id)
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
@@ -585,11 +567,11 @@ async def handle_message(message: Message):
             "messages": 0
         }
     else:
+        # Обновляем username при каждом сообщении
         data["stats"]["users"][user_id]["username"] = username
     
     data["stats"]["users"][user_id]["messages"] += 1
     
-    # Проверяем триггеры
     text_lower = message.text.lower()
     answered = False
     
@@ -601,8 +583,7 @@ async def handle_message(message: Message):
             answered = True
             break
     
-    # Если не нашли триггер — рандомная реакция
-    if not answered and random.random() < 0.15:  # 15% шанс
+    if not answered and random.random() < 0.15:
         random_reactions = [
             "🤔 Интересно! А расскажи поподробнее?",
             "Ого, неожиданно! И что дальше?",
@@ -618,9 +599,9 @@ async def handle_message(message: Message):
     
     save_data()
 
-# Заглушка
 @dp.message()
 async def catch_all(message: Message):
+    """Заглушка для необработанных сообщений"""
     pass
 
 # ============================================
@@ -628,11 +609,13 @@ async def catch_all(message: Message):
 # ============================================
 
 async def on_startup():
+    """Действия при запуске"""
     load_data()
     asyncio.create_task(periodic_save())
     logger.info("✅ Палыч готов к работе!")
 
 async def main():
+    """Главная функция"""
     await on_startup()
     
     logger.info("🤖 Палыч запускается...")
@@ -644,8 +627,6 @@ async def main():
             allowed_updates=[
                 "message",
                 "edited_message",
-                "channel_post",
-                "edited_channel_post",
                 "chat_member",
                 "my_chat_member",
                 "callback_query"
