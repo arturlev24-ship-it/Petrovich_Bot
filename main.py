@@ -10,8 +10,8 @@ import re
 import os
 import json
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
 from aiogram.enums import ParseMode, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
@@ -37,20 +37,31 @@ stats = {
     "chats": []
 }
 
+welcome_settings = {}  # {chat_id: welcome_message}
+goodbye_settings = {}  # {chat_id: goodbye_message}
+
 def load_data():
-    global stats
+    global stats, welcome_settings, goodbye_settings
     try:
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                stats = json.load(f)
+                data = json.load(f)
+                stats = data.get("stats", stats)
+                welcome_settings = data.get("welcome_settings", {})
+                goodbye_settings = data.get("goodbye_settings", {})
             logger.info("✅ Данные загружены")
     except Exception as e:
         logger.error(f"Ошибка загрузки: {e}")
 
 def save_data():
     try:
+        data = {
+            "stats": stats,
+            "welcome_settings": welcome_settings,
+            "goodbye_settings": goodbye_settings
+        }
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
@@ -68,7 +79,94 @@ async def safe_send(msg: Message, text: str, **kwargs):
     except TelegramAPIError as e:
         logger.error(f"Ошибка отправки: {e}")
 
-# Триггеры
+async def is_admin(chat_id, user_id):
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status in ['creator', 'administrator']
+    except:
+        return False
+
+# ============================================
+# ПРИВЕТСТВИЕ И ПРОЩАНИЕ (как в первом боте)
+# ============================================
+
+@dp.chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
+async def on_user_join(event: ChatMemberUpdated):
+    """Приветствие нового участника"""
+    chat_id = event.chat.id
+    user = event.new_chat_member.user
+    username = user.username or user.first_name
+    
+    logger.info(f"🔔 НОВЫЙ УЧАСТНИК в чате {chat_id}: {username}")
+    
+    # Сохраняем чат
+    cid = str(chat_id)
+    if cid not in stats["chats"]:
+        stats["chats"].append(cid)
+        save_data()
+    
+    # Если зашёл сам бот
+    if user.id == bot.id:
+        await bot.send_message(chat_id,
+            "🎉 <b>Палыч в чате!</b>\n\n"
+            "Теперь этот чат оживёт!\n"
+            "Пишите слова — я буду отвечать!\n"
+            "Команды: /help"
+        )
+        return
+    
+    # Проверяем кастомное приветствие
+    welcome_text = welcome_settings.get(cid)
+    if welcome_text:
+        text = welcome_text.replace('{username}', f'@{username}' if user.username else username)
+    else:
+        w = [
+            f"Опа, {username}! Заходи, не стесняйся! 🎉",
+            f"{username} ворвался в чат! Прячьте печеньки! 🍪",
+            f"Смотрите-ка, {username} пришёл! Чат оживает! ✨",
+            f"{username} на радарах! Всем построиться! 🚨",
+            f"Ну привет, {username}! Рассказывай, как жизнь? ☕",
+            f"Бам! {username} телепортировался в чат! 🌀",
+            f"Ого, {username}! А мы тебя ждали! 🤗",
+            f"Салют, {username}! Чувствуй себя как дома! 🏠"
+        ]
+        text = random.choice(w)
+    
+    await bot.send_message(chat_id, text)
+
+@dp.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
+async def on_user_leave(event: ChatMemberUpdated):
+    """Прощание с ушедшим участником"""
+    chat_id = event.chat.id
+    user = event.old_chat_member.user
+    
+    logger.info(f"🚪 УШЁЛ УЧАСТНИК из чата {chat_id}: {user.username or user.first_name}")
+    
+    if user.id == bot.id:
+        return
+    
+    username = user.username or user.first_name
+    cid = str(chat_id)
+    
+    goodbye_text = goodbye_settings.get(cid)
+    if goodbye_text:
+        text = goodbye_text.replace('{username}', f'@{username}' if user.username else username)
+    else:
+        f = [
+            f"Эх, {username} ушёл... Вернись, я всё прощу! 😢",
+            f"{username} покинул чат... Свободу попугаям! 🦜",
+            f"Прощай, {username}! Без тебя будет скучно... 👋",
+            f"{username} слился... Чат понёс невосполнимую потерю! 😔",
+            f"Пока, {username}! Заходи если что! Двери открыты! 🚪"
+        ]
+        text = random.choice(f)
+    
+    await bot.send_message(chat_id, text)
+
+# ============================================
+# ТРИГГЕРЫ
+# ============================================
+
 words = {
     r"привет|здравствуй|здаров|хелло|хай|салют|ку\b": [
         "О, здарова! Как жизнь? Рассказывай! 😊",
@@ -181,7 +279,10 @@ words = {
     ]
 }
 
-# Команды
+# ============================================
+# КОМАНДЫ
+# ============================================
+
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     if msg.chat.type == ChatType.PRIVATE:
@@ -209,7 +310,11 @@ async def cmd_help(msg: Message):
         "/start — перезапуск\n"
         "/help — справка\n"
         "/top — топ-10 болтливых\n"
-        "/stats — статистика\n\n"
+        "/stats — статистика\n"
+        "/set_welcome [текст] — настроить приветствие (админ)\n"
+        "/set_goodbye [текст] — настроить прощание (админ)\n"
+        "/reset_welcome — сбросить приветствие (админ)\n"
+        "/reset_goodbye — сбросить прощание (админ)\n\n"
         "Пиши: привет, еда, погода, игры, музыка..."
     )
 
@@ -240,62 +345,81 @@ async def cmd_stats(msg: Message):
         "🤖 Палыч работает!"
     )
 
-# Главный обработчик
-@dp.message()
-async def handle_all(msg: Message):
-    # Новые участники
-    if msg.new_chat_members:
-        logger.info("🔔 НОВЫЙ УЧАСТНИК!")
-        
-        cid = str(msg.chat.id)
-        if cid not in stats["chats"]:
-            stats["chats"].append(cid)
-            save_data()
-        
-        for member in msg.new_chat_members:
-            if member.id == bot.id:
-                await safe_send(msg,
-                    "🎉 <b>Палыч в чате!</b>\n\n"
-                    "Теперь этот чат оживёт!\n"
-                    "Пишите слова — я буду отвечать!\n"
-                    "Команды: /help"
-                )
-                return
-            
-            name = member.first_name or member.full_name
-            w = [
-                f"Опа, {name}! Заходи, не стесняйся! 🎉",
-                f"{name} ворвался в чат! 🍪",
-                f"Смотрите-ка, {name} пришёл! ✨",
-                f"{name} на радарах! 🚨",
-                f"Ну привет, {name}! ☕",
-                f"Бам! {name} телепортировался! 🌀",
-                f"Ого, {name}! А мы тебя ждали! 🤗",
-                f"Салют, {name}! 🏠"
-            ]
-            await safe_send(msg, random.choice(w))
+# Команды настройки приветствий
+@dp.message(Command("set_welcome"))
+async def cmd_set_welcome(msg: Message):
+    if msg.chat.type not in ['group', 'supergroup']:
         return
     
-    # Ушедшие
-    if msg.left_chat_member:
-        logger.info("🚪 УШЁЛ УЧАСТНИК!")
-        if msg.left_chat_member.id != bot.id:
-            name = msg.left_chat_member.first_name or msg.left_chat_member.full_name
-            f = [
-                f"Эх, {name} ушёл... 😢",
-                f"{name} покинул чат... 🦜",
-                f"Прощай, {name}! 👋",
-                f"{name} слился... 😔",
-                f"Пока, {name}! 🚪"
-            ]
-            await safe_send(msg, random.choice(f))
+    if not await is_admin(msg.chat.id, msg.from_user.id):
+        await safe_send(msg, "❌ Только администраторы могут настраивать приветствия!")
         return
     
-    # Пропуск ботов и команд
-    if msg.from_user.is_bot or not msg.text or msg.text.startswith('/'):
+    parts = msg.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await safe_send(msg, "📝 Использование: /set_welcome [текст]\nИспользуй {username} для имени")
         return
     
-    # Статистика
+    cid = str(msg.chat.id)
+    welcome_settings[cid] = parts[1]
+    save_data()
+    await safe_send(msg, f"✅ Приветствие установлено!\nПревью: {parts[1].replace('{username}', f'@{msg.from_user.username or msg.from_user.first_name}')}")
+
+@dp.message(Command("set_goodbye"))
+async def cmd_set_goodbye(msg: Message):
+    if msg.chat.type not in ['group', 'supergroup']:
+        return
+    
+    if not await is_admin(msg.chat.id, msg.from_user.id):
+        await safe_send(msg, "❌ Только администраторы могут настраивать прощания!")
+        return
+    
+    parts = msg.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await safe_send(msg, "📝 Использование: /set_goodbye [текст]\nИспользуй {username} для имени")
+        return
+    
+    cid = str(msg.chat.id)
+    goodbye_settings[cid] = parts[1]
+    save_data()
+    await safe_send(msg, f"✅ Прощание установлено!\nПревью: {parts[1].replace('{username}', f'@{msg.from_user.username or msg.from_user.first_name}')}")
+
+@dp.message(Command("reset_welcome"))
+async def cmd_reset_welcome(msg: Message):
+    if msg.chat.type not in ['group', 'supergroup']:
+        return
+    
+    if not await is_admin(msg.chat.id, msg.from_user.id):
+        return
+    
+    cid = str(msg.chat.id)
+    welcome_settings.pop(cid, None)
+    save_data()
+    await safe_send(msg, "✅ Приветствие сброшено до стандартного!")
+
+@dp.message(Command("reset_goodbye"))
+async def cmd_reset_goodbye(msg: Message):
+    if msg.chat.type not in ['group', 'supergroup']:
+        return
+    
+    if not await is_admin(msg.chat.id, msg.from_user.id):
+        return
+    
+    cid = str(msg.chat.id)
+    goodbye_settings.pop(cid, None)
+    save_data()
+    await safe_send(msg, "✅ Прощание сброшено до стандартного!")
+
+# ============================================
+# ОСНОВНОЙ ОБРАБОТЧИК
+# ============================================
+
+@dp.message(F.text)
+async def handle_text(msg: Message):
+    """Обработка текстовых сообщений"""
+    if msg.from_user.is_bot or msg.text.startswith('/'):
+        return
+    
     cid = str(msg.chat.id)
     uid = str(msg.from_user.id)
     uname = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
@@ -310,7 +434,6 @@ async def handle_all(msg: Message):
     
     stats["users"][uid]["messages"] += 1
     
-    # Триггеры
     text = msg.text.lower()
     for pattern, responses in words.items():
         if re.search(pattern, text):
@@ -319,7 +442,6 @@ async def handle_all(msg: Message):
             save_data()
             return
     
-    # Рандомная реакция
     if random.random() < 0.15:
         reactions = [
             "🤔 Интересно! А расскажи поподробнее?",
@@ -334,39 +456,25 @@ async def handle_all(msg: Message):
     
     save_data()
 
+@dp.message()
+async def catch_all(msg: Message):
+    pass
+
 # ============================================
 # ЗАПУСК
 # ============================================
 
 async def main():
-    """Главная функция запуска"""
-    # Загружаем данные
     load_data()
-    
-    # Запускаем автосохранение
     asyncio.create_task(auto_save())
-    
     logger.info("🤖 Палыч запускается...")
-    logger.info(f"📊 Чатов: {len(stats['chats'])}, Пользователей: {len(stats['users'])}")
-    
-    # Удаляем вебхук и старые обновления
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("🔄 Вебхук удалён, старые обновления сброшены")
-    
-    # Запускаем поллинг
-    await dp.start_polling(
-        bot,
-        allowed_updates=dp.resolve_used_update_types(),
-        handle_as_tasks=True,
-        skip_updates=True
-    )
+    await dp.start_polling(bot, allowed_updates=["message", "chat_member"])
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен вручную")
-        save_data()
+        logger.info("Бот остановлен")
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
-        save_data()
+        logger.error(f"Ошибка: {e}")
