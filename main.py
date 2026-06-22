@@ -494,19 +494,26 @@ async def cmd_stats(message: Message):
         "🤖 <b>Палыч работает стабильно!</b>"
     )
 
-# ============================================
+ ============================================
 # СОБЫТИЯ ЧАТА
 # ============================================
 
 @dp.message(F.new_chat_members)
 async def on_user_join(message: Message):
     """Приветствие новых участников"""
+    logger.info(f"🔔 СРАБОТАЛ ОБРАБОТЧИК ВХОДА! Чат: {message.chat.id}")
+    logger.info(f"👥 Новых участников: {len(message.new_chat_members)}")
+    
     chat_id = message.chat.id
     data["stats"]["chats"].add(str(chat_id))
     save_data()
     
     for new_member in message.new_chat_members:
+        logger.info(f"👤 Участник: {new_member.full_name} (ID: {new_member.id})")
+        logger.info(f"🤖 Это бот? {new_member.id == bot.id}")
+        
         if new_member.id == bot.id:
+            logger.info("🤖 Бот зашёл в чат — отправляю приветствие")
             await message.answer(
                 "🎉 <b>Палыч в чате!</b>\n\n"
                 "Теперь этот чат оживёт!\n"
@@ -516,6 +523,7 @@ async def on_user_join(message: Message):
             continue
         
         name = new_member.first_name or new_member.full_name
+        logger.info(f"👋 Приветствую: {name}")
         welcomes = [
             f"Опа, {name}! Заходи, не стесняйся! Рассказывай о себе! 🎉",
             f"{name} ворвался в чат! Прячьте печеньки! Кто ты, {name}? 🍪",
@@ -526,12 +534,18 @@ async def on_user_join(message: Message):
             f"Ого, {name}! А мы тебя ждали! Где пропадал? 🤗",
             f"Салют, {name}! Чувствуй себя как дома! Рассказывай о себе! 🏠"
         ]
-        await message.answer(random.choice(welcomes))
+        welcome_text = random.choice(welcomes)
+        logger.info(f"📤 Отправляю: {welcome_text}")
+        await message.answer(welcome_text)
 
 @dp.message(F.left_chat_member)
 async def on_user_leave(message: Message):
     """Прощание с ушедшими"""
+    logger.info(f"🚪 СРАБОТАЛ ОБРАБОТЧИК ВЫХОДА! Чат: {message.chat.id}")
+    logger.info(f"👤 Ушёл: {message.left_chat_member.full_name} (ID: {message.left_chat_member.id})")
+    
     if message.left_chat_member.id == bot.id:
+        logger.info("🤖 Бота удалили из чата")
         return
     
     name = message.left_chat_member.first_name or message.left_chat_member.full_name
@@ -542,9 +556,10 @@ async def on_user_leave(message: Message):
         f"{name} слился... Чат понёс невосполнимую потерю! 😔",
         f"Пока, {name}! Заходи если что! Двери открыты! 🚪"
     ]
-    await message.answer(random.choice(farewells))
-
-# ============================================
+    farewell_text = random.choice(farewells)
+    logger.info(f"📤 Отправляю: {farewell_text}")
+    await message.answer(farewell_text)
+ ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК
 # ============================================
 
