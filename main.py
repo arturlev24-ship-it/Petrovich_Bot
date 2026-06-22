@@ -626,7 +626,15 @@ async def main():
     try:
         await dp.start_polling(
             bot,
-            allowed_updates=["message", "chat_member", "my_chat_member"]
+            allowed_updates=[
+                "message",
+                "edited_message",
+                "channel_post",
+                "edited_channel_post",
+                "chat_member",
+                "my_chat_member",
+                "callback_query"
+            ]
         )
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
