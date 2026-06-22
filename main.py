@@ -681,23 +681,18 @@ async def main():
     logger.info("🤖 Петрович запускается...")
     
     try:
-        await dp.start_polling(bot, allowed_updates=[
-            "message",
-            "chat_member",
-            "my_chat_member"
-        ])
+        await dp.start_polling(
+            bot,
+            allowed_updates=[
+                "message",
+                "edited_message",
+                "chat_member",
+                "my_chat_member"
+            ]
+        )
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
         save_karma()
     finally:
         save_karma()
         logger.info("Бот остановлен, карма сохранена")
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен вручную")
-    except Exception as e:
-        logger.critical(f"Необработанная ошибка: {e}")
-        save_karma()
