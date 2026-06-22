@@ -488,6 +488,7 @@ async def cmd_stats(message: Message):
         "🤖 <b>Палыч работает стабильно!</b>"
     )
 
+
 # ============================================
 # СОБЫТИЯ ЧАТА
 # ============================================
@@ -495,24 +496,14 @@ async def cmd_stats(message: Message):
 @dp.message(F.new_chat_members)
 async def on_user_join(message: Message):
     """Приветствие новых участников"""
-    logger.info("=" * 50)
-    logger.info(f"🔔 СРАБОТАЛ ОБРАБОТЧИК ВХОДА!")
-    logger.info(f"📱 Чат ID: {message.chat.id}")
-    logger.info(f"📱 Тип чата: {message.chat.type}")
-    logger.info(f"👥 Новых участников: {len(message.new_chat_members)}")
-    logger.info(f"📝 Полное сообщение: {message.model_dump_json(indent=2)}")
-    logger.info("=" * 50)
+    logger.info(f"🔔 ВХОД через F.new_chat_members: {message.chat.id}")
     
     chat_id = message.chat.id
     data["stats"]["chats"].add(str(chat_id))
     save_data()
     
     for new_member in message.new_chat_members:
-        logger.info(f"👤 Участник: {new_member.full_name} (ID: {new_member.id})")
-        logger.info(f"🤖 Это бот? {new_member.id == bot.id}")
-        
         if new_member.id == bot.id:
-            logger.info("🤖 Это я! Отправляю приветствие бота")
             await message.answer(
                 "🎉 <b>Палыч в чате!</b>\n\n"
                 "Теперь этот чат оживёт!\n"
@@ -522,26 +513,148 @@ async def on_user_join(message: Message):
             continue
         
         name = new_member.first_name or new_member.full_name
-        logger.info(f"👋 Приветствую пользователя: {name}")
-        
         welcomes = [
-            f"Опа, {name}! Заходи, не стесняйся! Рассказывай о себе! 🎉",
-            f"{name} ворвался в чат! Прячьте печеньки! Кто ты, {name}? 🍪",
-            f"Смотрите-ка, {name} пришёл! Чат оживает! Откуда ты? ✨",
-            f"{name} появился на радарах! Всем построиться! Рассказывай! 🚨",
+            f"Опа, {name}! Заходи, не стесняйся! 🎉",
+            f"{name} ворвался в чат! Прячьте печеньки! 🍪",
+            f"Смотрите-ка, {name} пришёл! Чат оживает! ✨",
+            f"{name} появился на радарах! 🚨",
             f"Ну привет, {name}! Рассказывай, как жизнь? ☕",
-            f"Бам! {name} телепортировался в чат! Ты маг? 🌀",
-            f"Ого, {name}! А мы тебя ждали! Где пропадал? 🤗",
-            f"Салют, {name}! Чувствуй себя как дома! Рассказывай о себе! 🏠"
+            f"Бам! {name} телепортировался в чат! 🌀",
+            f"Ого, {name}! А мы тебя ждали! 🤗",
+            f"Салют, {name}! Чувствуй себя как дома! 🏠"
         ]
-        welcome_text = random.choice(welcomes)
-        logger.info(f"📤 Отправляю текст: {welcome_text}")
+        await message.answer(random.choice(welcomes))
+
+@dp.message(F.left_chat_member)
+async def on_user_leave(message: Message):
+    """Прощание с ушедшими"""
+    logger.info(f"🚪 ВЫХОД через F.left_chat_member: {message.chat.id}")
+    
+    if message.left_chat_member.id == bot.id:
+        return
+    
+    name = message.left_chat_member.first_name or message.left_chat_member.full_name
+    farewells = [
+        f"Эх, {name} ушёл... 😢",
+        f"{name} покинул чат... 🦜",
+        f"Прощай, {name}! 👋",
+        f"{name} слился... 😔",
+        f"Пока, {name}! 🚪"
+    ]
+    await message.answer(random.choice(farewells))
+
+# ============================================
+# ЗАГЛУШКА - ЛОВИТ ВСЁ ОСТАЛЬНОЕ
+# ============================================
+
+@dp.message()
+async def catch_all(message: Message):
+    """Ловит ВСЕ необработанные сообщения"""
+    
+    # Проверяем новых участников
+    if message.new_chat_members:
+        logger.info(f"🔔 НОВЫЕ УЧАСТНИКИ (catch_all): {len(message.new_chat_members)}")
         
-        try:
-            await message.answer(welcome_text)
-            logger.info(f"✅ Приветствие отправлено успешно!")
-        except Exception as e:
-            logger.error(f"❌ ОШИБКА ОТПРАВКИ: {e}")
+        chat_id = message.chat.id
+        data["stats"]["chats"].add(str(chat_id))
+        save_data()
+        
+        for new_member in message.new_chat_members:
+            if new_member.id == bot.id:
+                await message.answer(
+                    "🎉 <b>Палыч в чате!</b>\n\n"
+                    "Теперь этот чат оживёт!\n"
+                    "Пишите слова — я буду отвечать!\n"
+                    "Команды: /help"
+                )
+                continue
+            
+            name = new_member.first_name or new_member.full_name
+            welcomes = [
+                f"Опа, {name}! Заходи, не стесняйся! 🎉",
+                f"{name} ворвался в чат! Прячьте печеньки! 🍪",
+                f"Смотрите-ка, {name} пришёл! Чат оживает! ✨",
+                f"{name} появился на радарах! 🚨",
+                f"Ну привет, {name}! Рассказывай, как жизнь? ☕",
+                f"Бам! {name} телепортировался в чат! 🌀",
+                f"Ого, {name}! А мы тебя ждали! 🤗",
+                f"Салют, {name}! Чувствуй себя как дома! 🏠"
+            ]
+            await message.answer(random.choice(welcomes))
+        return
+    
+    # Проверяем ушедших участников
+    if message.left_chat_member:
+        logger.info(f"🚪 УШЁЛ (catch_all): {message.left_chat_member.full_name}")
+        
+        if message.left_chat_member.id != bot.id:
+            name = message.left_chat_member.first_name or message.left_chat_member.full_name
+            farewells = [
+                f"Эх, {name} ушёл... 😢",
+                f"{name} покинул чат... 🦜",
+                f"Прощай, {name}! 👋",
+                f"{name} слился... 😔",
+                f"Пока, {name}! 🚪"
+            ]
+            await message.answer(random.choice(farewells))
+        return
+
+# ============================================
+# ОСНОВНОЙ ОБРАБОТЧИК
+# ============================================
+
+@dp.message(F.text)
+async def handle_message(message: Message):
+    """Обработка текстовых сообщений"""
+    if message.from_user.is_bot:
+        return
+    
+    if not message.text or message.text.startswith('/'):
+        return
+    
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    
+    data["stats"]["chats"].add(chat_id)
+    
+    if user_id not in data["stats"]["users"]:
+        data["stats"]["users"][user_id] = {
+            "username": username,
+            "messages": 0
+        }
+    else:
+        data["stats"]["users"][user_id]["username"] = username
+    
+    data["stats"]["users"][user_id]["messages"] += 1
+    
+    text_lower = message.text.lower()
+    answered = False
+    
+    for pattern, responses in triggers.items():
+        if re.search(pattern, text_lower):
+            response = random.choice(responses)
+            await safe_send(message, response)
+            data["stats"]["messages_answered"] += 1
+            answered = True
+            break
+    
+    if not answered and random.random() < 0.15:
+        random_reactions = [
+            "🤔 Интересно! А расскажи поподробнее?",
+            "Ого, неожиданно! И что дальше?",
+            "Хмм, любопытно! А почему ты так думаешь?",
+            "Серьёзно? Вот это поворот! Рассказывай!",
+            "Да ладно! А можешь объяснить?",
+            "Ничего себе! И часто такое бывает?",
+            "🔥 Вот это тема! Продолжай!",
+            "Ммм, занимательно! А откуда ты это знаешь?"
+        ]
+        await safe_send(message, random.choice(random_reactions))
+        data["stats"]["messages_answered"] += 1
+    
+    save_data()
+
 
 # ============================================
 # ЗАПУСК
