@@ -62,7 +62,6 @@ class ChatOnlyMiddleware(BaseMiddleware):
                 return
             
             if event.chat.type in ["group", "supergroup"]:
-                logger.info(f"Пропускаю сообщения в группе: {event.chat.type}")
                 return await handler(event, data)
         
 return await handler(event, data)
