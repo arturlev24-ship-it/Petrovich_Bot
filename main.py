@@ -62,9 +62,10 @@ class ChatOnlyMiddleware(BaseMiddleware):
                 return
             
             if event.chat.type in ["group", "supergroup"]:
-                return await handler(event, data)
+logger.info(f"Пропускаю сообщения в группе: {event.chat.type}")
+return await handler(event, data)
         
-        return await handler(event, data)
+return await handler(event, data)
 
 # Регистрируем middleware
 dp.message.middleware(ChatOnlyMiddleware())
