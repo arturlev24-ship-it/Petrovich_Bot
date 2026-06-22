@@ -488,6 +488,61 @@ async def cmd_stats(message: Message):
         "🤖 <b>Палыч работает стабильно!</b>"
     )
 
+# ============================================
+# ОСНОВНОЙ ОБРАБОТЧИК (ДОЛЖЕН БЫТЬ ПЕРВЫМ)
+# ============================================
+
+@dp.message(F.text)
+async def handle_message(message: Message):
+    """Обработка текстовых сообщений"""
+    if message.from_user.is_bot:
+        return
+    
+    if not message.text or message.text.startswith('/'):
+        return
+    
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    
+    data["stats"]["chats"].add(chat_id)
+    
+    if user_id not in data["stats"]["users"]:
+        data["stats"]["users"][user_id] = {
+            "username": username,
+            "messages": 0
+        }
+    else:
+        data["stats"]["users"][user_id]["username"] = username
+    
+    data["stats"]["users"][user_id]["messages"] += 1
+    
+    text_lower = message.text.lower()
+    answered = False
+    
+    for pattern, responses in triggers.items():
+        if re.search(pattern, text_lower):
+            response = random.choice(responses)
+            await safe_send(message, response)
+            data["stats"]["messages_answered"] += 1
+            answered = True
+            break
+    
+    if not answered and random.random() < 0.15:
+        random_reactions = [
+            "🤔 Интересно! А расскажи поподробнее?",
+            "Ого, неожиданно! И что дальше?",
+            "Хмм, любопытно! А почему ты так думаешь?",
+            "Серьёзно? Вот это поворот! Рассказывай!",
+            "Да ладно! А можешь объяснить?",
+            "Ничего себе! И часто такое бывает?",
+            "🔥 Вот это тема! Продолжай!",
+            "Ммм, занимательно! А откуда ты это знаешь?"
+        ]
+        await safe_send(message, random.choice(random_reactions))
+        data["stats"]["messages_answered"] += 1
+    
+    save_data()
 
 # ============================================
 # СОБЫТИЯ ЧАТА
@@ -544,152 +599,15 @@ async def on_user_leave(message: Message):
     await message.answer(random.choice(farewells))
 
 # ============================================
-# ЗАГЛУШКА - ЛОВИТ ВСЁ ОСТАЛЬНОЕ
+# ЗАГЛУШКА - САМАЯ ПОСЛЕДНЯЯ
 # ============================================
 
 @dp.message()
 async def catch_all(message: Message):
-    """Ловит ВСЕ необработанные сообщения"""
-    
-    # Проверяем новых участников
-    if message.new_chat_members:
-        logger.info(f"🔔 НОВЫЕ УЧАСТНИКИ (catch_all): {len(message.new_chat_members)}")
-        
-        chat_id = message.chat.id
-        data["stats"]["chats"].add(str(chat_id))
-        save_data()
-        
-        for new_member in message.new_chat_members:
-            if new_member.id == bot.id:
-                await message.answer(
-                    "🎉 <b>Палыч в чате!</b>\n\n"
-                    "Теперь этот чат оживёт!\n"
-                    "Пишите слова — я буду отвечать!\n"
-                    "Команды: /help"
-                )
-                continue
-            
-            name = new_member.first_name or new_member.full_name
-            welcomes = [
-                f"Опа, {name}! Заходи, не стесняйся! 🎉",
-                f"{name} ворвался в чат! Прячьте печеньки! 🍪",
-                f"Смотрите-ка, {name} пришёл! Чат оживает! ✨",
-                f"{name} появился на радарах! 🚨",
-                f"Ну привет, {name}! Рассказывай, как жизнь? ☕",
-                f"Бам! {name} телепортировался в чат! 🌀",
-                f"Ого, {name}! А мы тебя ждали! 🤗",
-                f"Салют, {name}! Чувствуй себя как дома! 🏠"
-            ]
-            await message.answer(random.choice(welcomes))
-        return
-    
-    # Проверяем ушедших участников
-    if message.left_chat_member:
-        logger.info(f"🚪 УШЁЛ (catch_all): {message.left_chat_member.full_name}")
-        
-        if message.left_chat_member.id != bot.id:
-            name = message.left_chat_member.first_name or message.left_chat_member.full_name
-            farewells = [
-                f"Эх, {name} ушёл... 😢",
-                f"{name} покинул чат... 🦜",
-                f"Прощай, {name}! 👋",
-                f"{name} слился... 😔",
-                f"Пока, {name}! 🚪"
-            ]
-            await message.answer(random.choice(farewells))
-        return
+    """Ловит оставшиеся сообщения (стикеры, фото и т.д.)"""
+    # Просто логируем для отладки
+    logger.debug(f"Необработанное сообщение от {message.from_user.full_name}")
 
-# ============================================
-# ОСНОВНОЙ ОБРАБОТЧИК
-# ============================================
-
-@dp.message(F.text)
-async def handle_message(message: Message):
-    """Обработка текстовых сообщений"""
-    if message.from_user.is_bot:
-        return
-    
-    if not message.text or message.text.startswith('/'):
-        return
-    
-    chat_id = str(message.chat.id)
-    user_id = str(message.from_user.id)
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-    
-    data["stats"]["chats"].add(chat_id)
-    
-    if user_id not in data["stats"]["users"]:
-        data["stats"]["users"][user_id] = {
-            "username": username,
-            "messages": 0
-        }
-    else:
-        data["stats"]["users"][user_id]["username"] = username
-    
-    data["stats"]["users"][user_id]["messages"] += 1
-    
-    text_lower = message.text.lower()
-    answered = False
-    
-    for pattern, responses in triggers.items():
-        if re.search(pattern, text_lower):
-            response = random.choice(responses)
-            await safe_send(message, response)
-            data["stats"]["messages_answered"] += 1
-            answered = True
-            break
-    
-    if not answered and random.random() < 0.15:
-        random_reactions = [
-            "🤔 Интересно! А расскажи поподробнее?",
-            "Ого, неожиданно! И что дальше?",
-            "Хмм, любопытно! А почему ты так думаешь?",
-            "Серьёзно? Вот это поворот! Рассказывай!",
-            "Да ладно! А можешь объяснить?",
-            "Ничего себе! И часто такое бывает?",
-            "🔥 Вот это тема! Продолжай!",
-            "Ммм, занимательно! А откуда ты это знаешь?"
-        ]
-        await safe_send(message, random.choice(random_reactions))
-        data["stats"]["messages_answered"] += 1
-    
-    save_data()
-
-
-# ============================================
-# ЗАПУСК
-# ============================================
-
-async def on_startup():
-    """Действия при запуске"""
-    load_data()
-    asyncio.create_task(periodic_save())
-    logger.info("✅ Палыч готов к работе!")
-
-async def main():
-    """Главная функция"""
-    await on_startup()
-    
-    logger.info("🤖 Палыч запускается...")
-    logger.info(f"📊 Загружено: {len(data['stats']['chats'])} чатов, {len(data['stats']['users'])} пользователей")
-    
-    try:
-        await dp.start_polling(
-            bot,
-            allowed_updates=[
-                "message",
-                "edited_message",
-                "chat_member",
-                "my_chat_member",
-                "callback_query"
-            ]
-        )
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
-        save_data()
-    finally:
-        save_data()
-        logger.info("👋 Палыч остановлен, данные сохранены")
 
 if __name__ == "__main__":
     try:
