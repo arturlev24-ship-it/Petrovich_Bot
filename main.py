@@ -491,44 +491,70 @@ async def handle_all_text(msg: Message):
                 return
         
         try:
-            offender_id = None
-            try:
-                user_chat = await bot.get_chat(f"@{victim_username}")
-                offender_id = user_chat.id
-                try:
-                    member = await bot.get_chat_member(msg.chat.id, offender_id)
-                    if member.status in ['left', 'kicked']:
-                        await msg.reply(f"❓ @{victim_username} нет в этом чате!")
-                        return
-                except:
-                    await msg.reply(f"❓ @{victim_username} не найден в чате!")
-                    return
-            except:
-                await msg.reply(f"❓ @{victim_username} не существует!")
-                return
-            
-            admins = await bot.get_chat_administrators(msg.chat.id)
-            if offender_id in [admin.user.id for admin in admins if admin.status in ['creator', 'administrator']]:
-                await msg.reply(f"🤨 @{victim_username} — администратор!")
-                return
-            
-            success = await mute_user(msg.chat.id, offender_id, 2)
-            if success:
-                last_complaint_time[complainant_id] = now
-                save_data()
-                await msg.reply(
-                    f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
-                    f"👊 Обидчик: @{victim_username}\n"
-                    f"💀 Я уебал @{victim_username}!\n"
-                    f"🔇 Мут на <b>2 минуты</b>!\n\n"
-                    f"⏰ Следующая жалоба через <b>10 минут</b>"
-                )
-            else:
-                await msg.reply(f"❌ Не удалось! Проверь права бота!")
-        except Exception as e:
-            logger.error(f"Ошибка жалобы: {e}")
-            await msg.reply("❌ Ошибка!")
+    offender_id = None
+    
+    # Ищем пользователя ВСЕМИ способами
+    # Способ 1: Ищем в чате по username через get_chat
+    try:
+        user_chat = await bot.get_chat(f"@{victim_username}")
+        offender_id = user_chat.id
+    except:
+        pass
+    
+    # Способ 2: Если не нашли — ищем среди участников чата
+    if not offender_id:
+        # Просим пользователя написать что-то в чат
+        await msg.reply(
+            f"🔍 @{victim_username}, отзовись! На тебя поступила жалоба!\n"
+            f"Напиши любое сообщение, чтобы я смог тебя найти."
+        )
         return
+    
+    # Проверяем, есть ли пользователь в чате
+    try:
+        member = await bot.get_chat_member(msg.chat.id, offender_id)
+        if member.status in ['left', 'kicked']:
+            await msg.reply(f"❓ @{victim_username} нет в этом чате (был, но вышел)!")
+            return
+    except:
+        await msg.reply(f"❓ @{victim_username} не найден в этом чате!")
+        return
+    
+    # Проверка на админа
+    admins = await bot.get_chat_administrators(msg.chat.id)
+    if offender_id in [admin.user.id for admin in admins if admin.status in ['creator', 'administrator']]:
+        await msg.reply(f"🤨 @{victim_username} — администратор!")
+        return
+    
+    # Проверка на бота
+    if member.user.is_bot:
+        await msg.reply(f"🤖 @{victim_username} — бот!")
+        return
+    
+    # МУТ
+    success = await mute_user(msg.chat.id, offender_id, 2)
+    if success:
+        last_complaint_time[complainant_id] = now
+        save_data()
+        await msg.reply(
+            f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
+            f"👊 Обидчик: @{victim_username}\n"
+            f"💀 Я уебал @{victim_username}!\n"
+            f"🔇 Мут на <b>2 минуты</b>!\n\n"
+            f"⏰ Следующая жалоба через <b>10 минут</b>"
+        )
+    else:
+        await msg.reply(
+            f"❌ Не удалось замутить @{victim_username}!\n\n"
+            f"Проверь:\n"
+            f"• Бот — администратор\n"
+            f"• У бота есть право блокировать\n"
+            f"• Роль бота выше роли @{victim_username}"
+        )
+except Exception as e:
+    logger.error(f"Ошибка жалобы: {e}")
+    await msg.reply("❌ Ошибка при обработке жалобы!")
+return
     
     # СТАТИСТИКА
     cid = str(msg.chat.id)
