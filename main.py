@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 7.0 - Финальная с жалобами
+Версия: 8.0 - Жалоба через reply
 """
 
 import asyncio
@@ -161,7 +161,7 @@ async def on_user_join(event: ChatMemberUpdated):
             "Теперь этот чат оживёт!\n"
             "Пишите слова — я буду отвечать!\n"
             "Команды: /help\n"
-            "Жалоба: @username меня обидел"
+            "Жалоба: ответь на сообщение и напиши 'меня обидел'"
         )
         return
     welcome_text = welcome_settings.get(cid)
@@ -362,9 +362,9 @@ async def cmd_help(msg: Message):
         "/stats — статистика\n"
         "/set_welcome — приветствие (админ)\n"
         "/set_goodbye — прощание (админ)\n\n"
-        "💢 <b>Жалоба:</b>\n"
-        "@username меня обидел\n"
-        "(раз в 10 минут)\n\n"
+        "💢 <b>Жалоба (раз в 10 мин):</b>\n"
+        "Ответь на сообщение обидчика и напиши:\n"
+        "<b>меня обидел</b> или <b>жалоба</b> или <b>накажи</b>\n\n"
         "Пиши: привет, еда, погода..."
     )
 
@@ -455,16 +455,21 @@ async def handle_all_text(msg: Message):
 
     text = msg.text.lower()
 
-    # === ЖАЛОБЫ ===
-    match = re.search(r"@(\w+)\s+(меня\s+обидел|обидел\s+меня|жалоба|накажи)", text)
-    if match:
-        victim_username = match.group(1)
+    # === ЖАЛОБА ЧЕРЕЗ REPLY ===
+    if msg.reply_to_message and re.search(r"(меня\s+обидел|обидел\s+меня|жалоба|накажи)", text):
+        offender = msg.reply_to_message.from_user
         complainant_id = msg.from_user.id
         complainant_name = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
+        offender_name = f"@{offender.username}" if offender.username else offender.first_name
 
         # Нельзя на себя
-        if msg.from_user.username and msg.from_user.username.lower() == victim_username.lower():
-            await msg.reply("🤔 Нельзя жаловаться на себя!")
+        if offender.id == complainant_id:
+            await msg.reply("🤔 Нельзя жаловаться на самого себя!")
+            return
+
+        # Нельзя на бота
+        if offender.is_bot:
+            await msg.reply("🤖 Нельзя жаловаться на ботов!")
             return
 
         # Проверка времени (10 минут)
@@ -478,52 +483,33 @@ async def handle_all_text(msg: Message):
                 await msg.reply(f"⏳ Жалоба через: <b>{mins} мин {secs} сек</b>")
                 return
 
-        # Поиск обидчика
+        # Проверка на админа
         try:
-            offender_id = None
-
-            # Получаем ID по username
-            try:
-                user_info = await bot.get_chat(f"@{victim_username}")
-                offender_id = user_info.id
-            except Exception:
-                await msg.reply(f"❓ @{victim_username} не найден в Telegram!")
-                return
-
-            # Проверяем, что он в чате
-            try:
-                member = await bot.get_chat_member(msg.chat.id, offender_id)
-                if member.status in ['left', 'kicked']:
-                    await msg.reply(f"❓ @{victim_username} нет в чате!")
-                    return
-            except Exception:
-                await msg.reply(f"❓ @{victim_username} не в этом чате!")
-                return
-
-            # Проверка на админа
             admins = await bot.get_chat_administrators(msg.chat.id)
             admin_ids = [a.user.id for a in admins if a.status in ['creator', 'administrator']]
-            if offender_id in admin_ids:
-                await msg.reply(f"🤨 @{victim_username} — админ!")
+            if offender.id in admin_ids:
+                await msg.reply(f"🤨 {offender_name} — администратор, нельзя!")
                 return
-
-            # МУТ
-            success = await mute_user(msg.chat.id, offender_id, 2)
-            if success:
-                last_complaint_time[complainant_id] = now
-                save_data()
-                await msg.reply(
-                    f"📢 <b>ЖАЛОБА!</b>\n\n"
-                    f"👊 Обидчик: @{victim_username}\n"
-                    f"💀 Я уебал @{victim_username}!\n"
-                    f"🔇 Мут на <b>2 минуты</b>!\n\n"
-                    f"⏰ Следующая жалоба через <b>10 мин</b>"
-                )
-            else:
-                await msg.reply("❌ Не удалось! Проверь права бота!")
         except Exception as e:
-            logger.error(f"Ошибка жалобы: {e}")
-            await msg.reply("❌ Ошибка!")
+            logger.error(f"Ошибка проверки админа: {e}")
+
+        # МУТ
+        success = await mute_user(msg.chat.id, offender.id, 2)
+        if success:
+            last_complaint_time[complainant_id] = now
+            save_data()
+            await msg.reply(
+                f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
+                f"👊 Обидчик: {offender_name}\n"
+                f"💀 Я уебал {offender_name}!\n"
+                f"🔇 Мут на <b>2 минуты</b>!\n\n"
+                f"⏰ Следующая жалоба через <b>10 мин</b>"
+            )
+        else:
+            await msg.reply(
+                f"❌ Не удалось замутить {offender_name}!\n"
+                f"Проверь что бот — администратор с правом блокировки!"
+            )
         return
 
     # === СТАТИСТИКА ===
