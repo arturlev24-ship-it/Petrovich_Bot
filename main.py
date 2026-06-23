@@ -9,9 +9,10 @@ import logging
 import re
 import os
 import json
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated, ChatPermissions
 from aiogram.enums import ParseMode, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
@@ -39,9 +40,11 @@ stats = {
 
 welcome_settings = {}  # {chat_id: welcome_message}
 goodbye_settings = {}  # {chat_id: goodbye_message}
+muted_users = {}  # {user_id: datetime когда размутится}
+last_complaint_time = {}  # {user_id: datetime последней жалобы}
 
 def load_data():
-    global stats, welcome_settings, goodbye_settings
+    global stats, welcome_settings, goodbye_settings, muted_users, last_complaint_time
     try:
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -49,16 +52,24 @@ def load_data():
                 stats = data.get("stats", stats)
                 welcome_settings = data.get("welcome_settings", {})
                 goodbye_settings = data.get("goodbye_settings", {})
+                muted_users = data.get("muted_users", {})
+                muted_users = {int(k): datetime.fromisoformat(v) for k, v in muted_users.items()}
+                last_complaint_time = data.get("last_complaint_time", {})
+                last_complaint_time = {int(k): datetime.fromisoformat(v) for k, v in last_complaint_time.items()}
             logger.info("✅ Данные загружены")
     except Exception as e:
         logger.error(f"Ошибка загрузки: {e}")
 
 def save_data():
     try:
+        muted_serializable = {str(k): v.isoformat() for k, v in muted_users.items()}
+        complaint_serializable = {str(k): v.isoformat() for k, v in last_complaint_time.items()}
         data = {
             "stats": stats,
             "welcome_settings": welcome_settings,
-            "goodbye_settings": goodbye_settings
+            "goodbye_settings": goodbye_settings,
+            "muted_users": muted_serializable,
+            "last_complaint_time": complaint_serializable
         }
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -85,6 +96,51 @@ async def is_admin(chat_id, user_id):
         return member.status in ['creator', 'administrator']
     except:
         return False
+
+async def mute_user(chat_id: int, user_id: int, minutes: int = 2):
+    """Мутит пользователя на указанное время"""
+    try:
+        until_time = datetime.now() + timedelta(minutes=minutes)
+        permissions = ChatPermissions(
+            can_send_messages=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False
+        )
+        await bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_time)
+        muted_users[user_id] = until_time
+        save_data()
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка мута: {e}")
+        return False
+
+async def check_mutes():
+    """Периодическая проверка и снятие мутов"""
+    while True:
+        await asyncio.sleep(30)  # Проверяем каждые 30 секунд
+        now = datetime.now()
+        to_unmute = []
+        
+        for user_id, until_time in list(muted_users.items()):
+            if now >= until_time:
+                to_unmute.append(user_id)
+        
+        for user_id in to_unmute:
+            try:
+                permissions = ChatPermissions(
+                    can_send_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True
+                )
+                # Нужно знать chat_id, но мы не храним его в muted_users
+                # Поэтому просто удаляем из списка
+                muted_users.pop(user_id, None)
+                logger.info(f"🔊 Пользователь {user_id} размучен")
+            except Exception as e:
+                logger.error(f"Ошибка размута: {e}")
+        
+        if to_unmute:
+            save_data()
 
 # ============================================
 # ПРИВЕТСТВИЕ И ПРОЩАНИЕ (как в первом боте)
@@ -419,6 +475,91 @@ async def cmd_reset_goodbye(msg: Message):
     goodbye_settings.pop(cid, None)
     save_data()
     await safe_send(msg, "✅ Прощание сброшено до стандартного!")
+
+# Команда для наказания обидчика (раз в 10 минут)
+@dp.message(F.text)
+async def handle_complaint(msg: Message):
+    """Обработка жалоб на пользователей"""
+    if msg.from_user.is_bot or not msg.text:
+        return
+    
+    text = msg.text.lower()
+    
+    # Проверяем паттерны жалоб
+    match = re.search(r"@(\w+)\s+(меня\s+обидел|обидел\s+меня|жалоба|накажи|накажи\s+его|накажи\s+её)", text)
+    if match:
+        victim_username = match.group(1)
+        complainant_id = msg.from_user.id
+        complainant_name = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
+        
+        # Проверяем, не жалуется ли пользователь на себя
+        if msg.from_user.username and msg.from_user.username.lower() == victim_username.lower():
+            await msg.reply("🤔 Ты не можешь пожаловаться на самого себя!")
+            return
+        
+        # Проверяем время последней жалобы
+        now = datetime.now()
+        if complainant_id in last_complaint_time:
+            time_since_last = now - last_complaint_time[complainant_id]
+            if time_since_last < timedelta(minutes=10):
+                remaining = timedelta(minutes=10) - time_since_last
+                minutes_left = remaining.seconds // 60
+                seconds_left = remaining.seconds % 60
+                await msg.reply(
+                    f"⏳ {complainant_name}, ты уже жаловался недавно!\n"
+                    f"Следующая жалоба через: <b>{minutes_left} мин {seconds_left} сек</b>"
+                )
+                return
+        
+        # Ищем обидчика в чате
+        try:
+            # Получаем список участников чата
+            admins = await bot.get_chat_administrators(msg.chat.id)
+            
+            # Ищем пользователя по username
+            offender = None
+            for admin in admins:
+                if admin.user.username and admin.user.username.lower() == victim_username.lower():
+                    offender = admin.user
+                    break
+            
+            if offender:
+                # Проверяем, не админ ли обидчик
+                if offender.id in [admin.user.id for admin in admins if admin.status in ['creator', 'administrator']]:
+                    await msg.reply(f"🤨 @{victim_username} — администратор, его нельзя наказать!")
+                    return
+                
+                # Мутим обидчика
+                success = await mute_user(msg.chat.id, offender.id, 2)
+                if success:
+                    # Сохраняем время жалобы
+                    last_complaint_time[complainant_id] = now
+                    save_data()
+                    
+                    await msg.reply(
+                        f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
+                        f"👊 Обидчик: @{victim_username}\n"
+                        f"💀 Я уебал @{victim_username}!\n"
+                        f"🔇 Теперь у него мут на <b>2 минуты</b>!\n\n"
+                        f"⏰ {complainant_name}, следующая жалоба доступна через <b>10 минут</b>"
+                    )
+                else:
+                    await msg.reply(
+                        f"❌ Не удалось наказать @{victim_username}!\n"
+                        f"Убедись, что у меня есть права администратора с возможностью ограничивать пользователей!"
+                    )
+            else:
+                await msg.reply(
+                    f"❓ @{victim_username} не найден в чате!\n"
+                    f"Убедись, что:\n"
+                    f"• Пользователь есть в этом чате\n"
+                    f"• Username написан правильно\n"
+                    f"• У пользователя есть @username"
+                )
+        except Exception as e:
+            logger.error(f"Ошибка поиска обидчика: {e}")
+            await msg.reply("❌ Произошла ошибка при поиске обидчика!")
+        return
 
 # ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК
