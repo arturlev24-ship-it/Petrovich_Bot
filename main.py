@@ -521,48 +521,76 @@ async def handle_all_text(msg: Message):
                 return
 
 try:
-    # Ищем пользователя
-    offender = None
+    # Ищем пользователя среди ВСЕХ участников чата
     offender_id = None
-    admins = await bot.get_chat_administrators(msg.chat.id)
+    offender_username = None
     
-    # Способ 1: Среди админов
-    for admin in admins:
-        if admin.user.username and admin.user.username.lower() == victim_username.lower():
-            offender = admin.user
-            offender_id = admin.user.id
-            break
+    # Получаем ВСЕХ участников чата (не только админов)
+    # Для этого используем get_chat_member для каждого, но сначала найдем ID через username
     
-    # Способ 2: Через get_chat по username
-    if not offender:
+    # Способ 1: Находим пользователя по @username
+    try:
+        # Получаем информацию о пользователе по username
+        user_chat = await bot.get_chat(f"@{victim_username}")
+        offender_id = user_chat.id
+        offender_username = user_chat.username
+        
+        # Проверяем, есть ли этот пользователь в нашем чате
         try:
-            chat_info = await bot.get_chat(f"@{victim_username}")
-            offender_id = chat_info.id
-            try:
-                member = await bot.get_chat_member(msg.chat.id, offender_id)
-                if member:
-                    offender = member.user
-            except:
-                pass
-        except:
-            pass
-    
-    # Способ 3: Не нашли
-    if not offender:
+            member = await bot.get_chat_member(msg.chat.id, offender_id)
+            if member.status == 'left' or member.status == 'kicked':
+                await msg.reply(f"❓ @{victim_username} есть в Telegram, но его нет в этом чате!")
+                return
+        except Exception as e:
+            await msg.reply(f"❓ @{victim_username} не найден в этом чате!")
+            return
+            
+    except Exception as e:
         await msg.reply(
-            f"❓ Не могу найти @{victim_username}!\n\n"
+            f"❓ @{victim_username} не найден!\n\n"
             f"Причины:\n"
-            f"• Пользователя нет в чате\n"
-            f"• Неправильный @username\n"
-            f"• У пользователя скрытый профиль\n\n"
-            f"Попроси @{victim_username} написать что-то!"
+            f"• Такого пользователя не существует\n"
+            f"• Username написан неправильно\n"
+            f"• У пользователя нет @username"
         )
         return
     
-    # Проверка на админа
+    # Проверяем, не админ ли это
+    admins = await bot.get_chat_administrators(msg.chat.id)
     if offender_id in [admin.user.id for admin in admins if admin.status in ['creator', 'administrator']]:
-        await msg.reply(f"🤨 @{victim_username} — администратор, нельзя!")
+        await msg.reply(f"🤨 @{victim_username} — администратор, его нельзя наказать!")
         return
+    
+    # Проверяем, не бот ли это
+    if user_chat.is_bot:
+        await msg.reply(f"🤖 @{victim_username} — бот, его нельзя наказать!")
+        return
+    
+    # МУТИМ ОБИДЧИКА
+    success = await mute_user(msg.chat.id, offender_id, 2)
+    if success:
+        last_complaint_time[complainant_id] = now
+        save_data()
+        
+        await msg.reply(
+            f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
+            f"👊 Обидчик: @{victim_username}\n"
+            f"💀 Я уебал @{victim_username}!\n"
+            f"🔇 Теперь у него мут на <b>2 минуты</b>!\n\n"
+            f"⏰ {complainant_name}, следующая жалоба через <b>10 минут</b>"
+        )
+    else:
+        await msg.reply(
+            f"❌ Не удалось наказать @{victim_username}!\n\n"
+            f"Убедись, что:\n"
+            f"• Бот — администратор чата\n"
+            f"• У бота включено право «Блокировать пользователей»\n"
+            f"• Роль бота выше роли @{victim_username}"
+        )
+except Exception as e:
+    logger.error(f"Ошибка жалобы: {e}")
+    await msg.reply("❌ Произошла ошибка при обработке жалобы!")
+return
     
     # Мут
     success = await mute_user(msg.chat.id, offender_id, 2)
