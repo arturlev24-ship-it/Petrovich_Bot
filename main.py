@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 14.0 - Полный рандом
+Версия: 15.0 - Выбор из реальных участников
 """
 
 import asyncio
@@ -442,41 +442,43 @@ async def handle_all_text(msg: Message):
         if re.search(pattern, text):
             response = random.choice(responses)
 
-            # Замена {username} на СЛУЧАЙНОГО из ВСЕХ
+            # Замена {username} на СЛУЧАЙНОГО из ВСЕХ участников
             if "{username}" in response:
                 try:
-                    all_names = []
+                    all_members = []
 
-                    # Собираем имена из статистики
-                    for uid_str, info in stats.get("users", {}).items():
-                        name = info.get("username", f"ID{uid_str}")
-                        if not name.startswith("ID"):
-                            all_names.append(name)
-
-                    # Добавляем админов
+                    # Получаем администраторов
                     try:
                         admins = await bot.get_chat_administrators(msg.chat.id)
                         for admin in admins:
                             if not admin.user.is_bot:
                                 name = f"@{admin.user.username}" if admin.user.username else admin.user.first_name
-                                if name not in all_names:
-                                    all_names.append(name)
+                                all_members.append(name)
                     except:
                         pass
 
-                    # Если имён мало — добавляем случайные
-                    if len(all_names) <= 1:
-                        extra_names = [
-                            "кто-то из чата", "твой сосед", "человек сверху",
-                            "аноним", "твой друг", "знакомый незнакомец",
-                            "пользователь Telegram", "один участник"
-                        ]
-                        for name in extra_names:
-                            if name not in all_names:
-                                all_names.append(name)
+                    # Добавляем участников из статистики
+                    for uid_str, info in stats.get("users", {}).items():
+                        name = info.get("username", f"ID{uid_str}")
+                        if name not in all_members and not name.startswith("ID"):
+                            all_members.append(name)
 
-                    if all_names:
-                        response = response.replace("{username}", random.choice(all_names))
+                    # Пытаемся получить количество участников
+                    try:
+                        member_count = await bot.get_chat_member_count(msg.chat.id)
+                        # Если участников больше чем у нас в списке
+                        if member_count > len(all_members):
+                            # Добавляем ещё раз всех админов для разнообразия
+                            for admin in admins:
+                                if not admin.user.is_bot:
+                                    name = f"@{admin.user.username}" if admin.user.username else admin.user.first_name
+                                    if name not in all_members:
+                                        all_members.append(name)
+                    except:
+                        pass
+
+                    if all_members:
+                        response = response.replace("{username}", random.choice(all_members))
                     else:
                         response = response.replace("{username}", "кто-то из чата")
                 except:
