@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 8.0 - Жалоба через reply
+Версия: 10.0 - Финальная
 """
 
 import asyncio
@@ -24,10 +24,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not BOT_TOKEN:
-    print("❌ Ошибка: BOT_TOKEN не найден!")
-    exit(1)
+BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 
 DATA_FILE = "palych_data.json"
 
@@ -93,6 +90,8 @@ async def auto_save():
 
 async def safe_send(msg: Message, text: str, **kwargs):
     try:
+        await bot.send_chat_action(chat_id=msg.chat.id, action="typing")
+        await asyncio.sleep(1.5)
         await msg.answer(text, **kwargs)
     except TelegramRetryAfter as e:
         await asyncio.sleep(e.retry_after)
@@ -150,7 +149,6 @@ async def on_user_join(event: ChatMemberUpdated):
     chat_id = event.chat.id
     user = event.new_chat_member.user
     username = user.username or user.first_name
-    logger.info(f"🔔 НОВЫЙ УЧАСТНИК: {username}")
     cid = str(chat_id)
     if cid not in stats["chats"]:
         stats["chats"].append(cid)
@@ -185,7 +183,6 @@ async def on_user_join(event: ChatMemberUpdated):
 async def on_user_leave(event: ChatMemberUpdated):
     chat_id = event.chat.id
     user = event.old_chat_member.user
-    logger.info(f"🚪 УШЁЛ: {user.username or user.first_name}")
     if user.id == bot.id:
         return
     username = user.username or user.first_name
@@ -318,13 +315,32 @@ words = {
         "Горы! 🏔️",
         "Отпуск! 🧳"
     ],
-    r"\bблять\b|\bсука\b|\bхуй\b|\bпизда\b|\bпиздец\b|\bнахуй\b|\bебать\b|\bзаебал\b|\bхуйня\b": [
+    r"\b(что делаешь|чем занят|что творишь|что случилось|что стряслось)\b": [
+        "Да так, сижу в интернете, чат оживляю! А ты чем занят? 💻",
+        "Общаюсь с тобой! Это моё любимое занятие! 😊",
+        "Да вот, мемасы смотрю 😂 А ты что делаешь? 📱",
+        "Работаю над собой! Прокачиваю скиллы! 💪",
+        "Развлекаю народ! Это моя миссия! 🎭"
+    ],
+    r"\b(пошёл нахуй|иди нахуй|пошел нахуй|заткнись|завали|отъебись|отвали|съеби)\b": [
+        "Сам иди нахуй, козёл! Я тут чат веселю! 🖕",
+        "Рот закрой, животное! Я Палыч! 😤",
+        "Ты на кого бочку катишь? Я тут главный! 🤬",
+        "Слышь, рамсы попутал? Я бот с характером! 😡",
+        "Чё развыступался? Иди лесом! 🌲",
+        "Ты походу берега попутал! 💀"
+    ],
+    r"\b(блять|сука|хуй|пизда|пиздец|нахуй|ебать|заебал|хуйня)\b": [
         "Ого, эмоции! Что случилось? 🤬",
         "Выпускай пар! 😤",
         "Что разозлило? 🔥",
-        "Бывает! Рассказывай! 😅",
-        "Что стряслось? 🤔",
-        "Не держи в себе! 🗣️"
+        "Бывает! Рассказывай! 😅"
+    ],
+    r"\b(кто самый|кто тут самый|назови самого)\b": [
+        "🤔 Хмм... Мне кажется это @{username}! 😏",
+        "🔮 Я вижу ауру... Это @{username}! 😂",
+        "📊 По моим подсчётам — @{username}! 💀",
+        "🎯 Мой рандомайзер показал на @{username}! 🤷‍♂️"
     ],
 }
 
@@ -359,13 +375,10 @@ async def cmd_help(msg: Message):
         "/start — перезапуск\n"
         "/help — справка\n"
         "/top — топ-10 болтливых\n"
-        "/stats — статистика\n"
-        "/set_welcome — приветствие (админ)\n"
-        "/set_goodbye — прощание (админ)\n\n"
-        "💢 <b>Жалоба (раз в 10 мин):</b>\n"
-        "Ответь на сообщение обидчика и напиши:\n"
-        "<b>меня обидел</b> или <b>жалоба</b> или <b>накажи</b>\n\n"
-        "Пиши: привет, еда, погода..."
+        "/stats — статистика\n\n"
+        "💢 <b>Жалоба:</b> ответь на сообщение + 'меня обидел'\n"
+        "🎯 <b>Спроси:</b> 'кто самый тупой?' — я выберу!\n\n"
+        "Пиши: привет, еда, погода, игры, музыка..."
     )
 
 @dp.message(Command("top"))
@@ -392,58 +405,8 @@ async def cmd_stats(msg: Message):
         f"🔇 В муте: <b>{len(muted_users)}</b>"
     )
 
-@dp.message(Command("set_welcome"))
-async def cmd_set_welcome(msg: Message):
-    if msg.chat.type not in ['group', 'supergroup']:
-        return
-    if not await is_admin(msg.chat.id, msg.from_user.id):
-        await safe_send(msg, "❌ Только админы!")
-        return
-    parts = msg.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await safe_send(msg, "📝 /set_welcome [текст]")
-        return
-    welcome_settings[str(msg.chat.id)] = parts[1]
-    save_data()
-    await safe_send(msg, "✅ Готово!")
-
-@dp.message(Command("set_goodbye"))
-async def cmd_set_goodbye(msg: Message):
-    if msg.chat.type not in ['group', 'supergroup']:
-        return
-    if not await is_admin(msg.chat.id, msg.from_user.id):
-        await safe_send(msg, "❌ Только админы!")
-        return
-    parts = msg.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await safe_send(msg, "📝 /set_goodbye [текст]")
-        return
-    goodbye_settings[str(msg.chat.id)] = parts[1]
-    save_data()
-    await safe_send(msg, "✅ Готово!")
-
-@dp.message(Command("reset_welcome"))
-async def cmd_reset_welcome(msg: Message):
-    if msg.chat.type not in ['group', 'supergroup']:
-        return
-    if not await is_admin(msg.chat.id, msg.from_user.id):
-        return
-    welcome_settings.pop(str(msg.chat.id), None)
-    save_data()
-    await safe_send(msg, "✅ Сброшено!")
-
-@dp.message(Command("reset_goodbye"))
-async def cmd_reset_goodbye(msg: Message):
-    if msg.chat.type not in ['group', 'supergroup']:
-        return
-    if not await is_admin(msg.chat.id, msg.from_user.id):
-        return
-    goodbye_settings.pop(str(msg.chat.id), None)
-    save_data()
-    await safe_send(msg, "✅ Сброшено!")
-
 # ============================================
-# ОСНОВНОЙ ОБРАБОТЧИК (ЖАЛОБЫ + ТРИГГЕРЫ)
+# ОСНОВНОЙ ОБРАБОТЧИК
 # ============================================
 
 @dp.message(F.text)
@@ -453,26 +416,22 @@ async def handle_all_text(msg: Message):
     if msg.text.startswith('/'):
         return
 
-    text = msg.text.lower()
+    text = msg.text.lower().strip()
 
-    # === ЖАЛОБА ЧЕРЕЗ REPLY ===
+    # ЖАЛОБА ЧЕРЕЗ REPLY
     if msg.reply_to_message and re.search(r"(меня\s+обидел|обидел\s+меня|жалоба|накажи)", text):
         offender = msg.reply_to_message.from_user
         complainant_id = msg.from_user.id
         complainant_name = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
         offender_name = f"@{offender.username}" if offender.username else offender.first_name
 
-        # Нельзя на себя
         if offender.id == complainant_id:
-            await msg.reply("🤔 Нельзя жаловаться на самого себя!")
+            await msg.reply("🤔 Нельзя жаловаться на себя!")
             return
-
-        # Нельзя на бота
         if offender.is_bot:
             await msg.reply("🤖 Нельзя жаловаться на ботов!")
             return
 
-        # Проверка времени (10 минут)
         now = datetime.now()
         if complainant_id in last_complaint_time:
             diff = now - last_complaint_time[complainant_id]
@@ -483,36 +442,22 @@ async def handle_all_text(msg: Message):
                 await msg.reply(f"⏳ Жалоба через: <b>{mins} мин {secs} сек</b>")
                 return
 
-        # Проверка на админа
-        try:
-            admins = await bot.get_chat_administrators(msg.chat.id)
-            admin_ids = [a.user.id for a in admins if a.status in ['creator', 'administrator']]
-            if offender.id in admin_ids:
-                await msg.reply(f"🤨 {offender_name} — администратор, нельзя!")
-                return
-        except Exception as e:
-            logger.error(f"Ошибка проверки админа: {e}")
-
-        # МУТ
         success = await mute_user(msg.chat.id, offender.id, 2)
         if success:
             last_complaint_time[complainant_id] = now
             save_data()
             await msg.reply(
-                f"📢 <b>ЖАЛОБА ОТ {complainant_name.upper()}!</b>\n\n"
+                f"📢 <b>ЖАЛОБА!</b>\n\n"
                 f"👊 Обидчик: {offender_name}\n"
                 f"💀 Я уебал {offender_name}!\n"
                 f"🔇 Мут на <b>2 минуты</b>!\n\n"
                 f"⏰ Следующая жалоба через <b>10 мин</b>"
             )
         else:
-            await msg.reply(
-                f"❌ Не удалось замутить {offender_name}!\n"
-                f"Проверь что бот — администратор с правом блокировки!"
-            )
+            await msg.reply("❌ Не удалось! Проверь права бота!")
         return
 
-    # === СТАТИСТИКА ===
+    # СТАТИСТИКА
     cid = str(msg.chat.id)
     uid = str(msg.from_user.id)
     uname = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
@@ -525,15 +470,31 @@ async def handle_all_text(msg: Message):
         stats["users"][uid]["username"] = uname
     stats["users"][uid]["messages"] += 1
 
-    # === ТРИГГЕРЫ ===
+    # ТРИГГЕРЫ
     for pattern, responses in words.items():
         if re.search(pattern, text):
-            await safe_send(msg, random.choice(responses))
+            response = random.choice(responses)
+            
+            # Заменяем {username} на случайного участника
+            if "{username}" in response:
+                try:
+                    admins = await bot.get_chat_administrators(msg.chat.id)
+                    users = [a.user for a in admins if not a.user.is_bot]
+                    if users:
+                        random_user = random.choice(users)
+                        random_name = f"@{random_user.username}" if random_user.username else random_user.first_name
+                        response = response.replace("{username}", random_name)
+                    else:
+                        response = response.replace("{username}", "неизвестный")
+                except:
+                    response = response.replace("{username}", "кто-то из чата")
+            
+            await safe_send(msg, response)
             stats["messages_answered"] += 1
             save_data()
             return
 
-    # === РАНДОМ ===
+    # РАНДОМ
     if random.random() < 0.15:
         reactions = [
             "🤔 Интересно! Расскажи подробнее!",
