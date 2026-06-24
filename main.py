@@ -477,18 +477,42 @@ async def handle_all_text(msg: Message):
             
             # Заменяем {username} на случайного из статистики
             if "{username}" in response:
-                all_users = list(stats.get("users", {}).items())
-                if all_users:
-                    random_uid, random_info = random.choice(all_users)
-                    random_name = random_info.get("username", f"ID{random_uid}")
-                    response = response.replace("{username}", random_name)
-                else:
-                    response = response.replace("{username}", "некто неизвестный")
-            
-            await safe_send(msg, response)
-            stats["messages_answered"] += 1
-            save_data()
-            return
+    try:
+        # Получаем ВСЕХ участников чата (кроме ботов)
+        all_members = []
+        # Сначала пробуем получить всех участников
+        try:
+            # Получаем администраторов (они точно есть)
+            admins = await bot.get_chat_administrators(msg.chat.id)
+            for admin in admins:
+                if not admin.user.is_bot:
+                    all_members.append(admin.user)
+        except:
+            pass
+        
+        # Добавляем пользователей из статистики, кого нет в админах
+        for uid, info in stats.get("users", {}).items():
+            try:
+                uid_int = int(uid)
+                if uid_int not in [m.id for m in all_members]:
+                    # Пробуем получить инфу о пользователе
+                    try:
+                        member = await bot.get_chat_member(msg.chat.id, uid_int)
+                        if member and not member.user.is_bot:
+                            all_members.append(member.user)
+                    except:
+                        pass
+            except:
+                pass
+        
+        if all_members:
+            random_user = random.choice(all_members)
+            random_name = f"@{random_user.username}" if random_user.username else random_user.first_name
+            response = response.replace("{username}", random_name)
+        else:
+            response = response.replace("{username}", "кто-то из чата")
+    except:
+        response = response.replace("{username}", "кто-то из чата")
 
     # РАНДОМ
     if random.random() < 0.15:
