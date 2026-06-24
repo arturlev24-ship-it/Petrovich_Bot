@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 11.0 - Финальная
+Версия: 13.0 - Выбор из всех участников
 """
 
 import asyncio
@@ -17,21 +17,14 @@ from aiogram.enums import ParseMode, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
-# ============================================
 # НАСТРОЙКИ
-# ============================================
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
 DATA_FILE = "palych_data.json"
 
-# ============================================
 # ИНИЦИАЛИЗАЦИЯ
-# ============================================
-
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
@@ -46,10 +39,7 @@ goodbye_settings = {}
 muted_users = {}
 last_complaint_time = {}
 
-# ============================================
 # ФУНКЦИИ ДАННЫХ
-# ============================================
-
 def load_data():
     global stats, welcome_settings, goodbye_settings, muted_users, last_complaint_time
     try:
@@ -99,17 +89,7 @@ async def safe_send(msg: Message, text: str, **kwargs):
     except TelegramAPIError as e:
         logger.error(f"Ошибка отправки: {e}")
 
-async def is_admin(chat_id, user_id):
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        return member.status in ['creator', 'administrator']
-    except Exception:
-        return False
-
-# ============================================
 # ФУНКЦИИ МУТА
-# ============================================
-
 async def mute_user(chat_id: int, user_id: int, minutes: int = 2):
     try:
         until_time = datetime.now() + timedelta(minutes=minutes)
@@ -140,10 +120,7 @@ async def check_mutes():
         if to_unmute:
             save_data()
 
-# ============================================
 # ПРИВЕТСТВИЕ И ПРОЩАНИЕ
-# ============================================
-
 @dp.chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
 async def on_user_join(event: ChatMemberUpdated):
     chat_id = event.chat.id
@@ -158,8 +135,7 @@ async def on_user_join(event: ChatMemberUpdated):
             "🎉 <b>Палыч в чате!</b>\n\n"
             "Теперь этот чат оживёт!\n"
             "Пишите слова — я буду отвечать!\n"
-            "Команды: /help\n"
-            "Жалоба: ответь на сообщение и напиши 'меня обидел'"
+            "Команды: /help"
         )
         return
     welcome_text = welcome_settings.get(cid)
@@ -201,10 +177,7 @@ async def on_user_leave(event: ChatMemberUpdated):
         text = random.choice(f_list)
     await bot.send_message(chat_id, text)
 
-# ============================================
 # ТРИГГЕРЫ
-# ============================================
-
 words = {
     r"привет|здравствуй|здаров|хелло|хай|салют|ку\b": [
         "О, здарова! Как жизнь? 😊",
@@ -315,14 +288,14 @@ words = {
         "Горы! 🏔️",
         "Отпуск! 🧳"
     ],
-    r"\b(что делаешь|чем занят|что творишь|что случилось|что стряслось)\b": [
+    r"что делаешь|чем занят|что творишь|что случилось|что стряслось": [
         "Да так, сижу в интернете, чат оживляю! А ты? 💻",
         "Общаюсь с тобой! Это моё любимое занятие! 😊",
         "Да вот, мемасы смотрю 😂 А ты что делаешь? 📱",
         "Работаю над собой! Прокачиваю скиллы! 💪",
         "Развлекаю народ! Это моя миссия! 🎭"
     ],
-    r"\b(пошёл нахуй|иди нахуй|пошел нахуй|заткнись|завали|отъебись|отвали|съеби)\b": [
+    r"пошёл нахуй|иди нахуй|пошел нахуй|заткнись|завали|отъебись|отвали|съеби": [
         "Сам иди нахуй, козёл! 🖕",
         "Рот закрой, животное! 😤",
         "Ты на кого бочку катишь? 🤬",
@@ -330,13 +303,13 @@ words = {
         "Чё развыступался? 🌲",
         "Ты походу берега попутал! 💀"
     ],
-    r"\b(блять|сука|хуй|пизда|пиздец|нахуй|ебать|заебал|хуйня)\b": [
+    r"блять|сука|хуй|пизда|пиздец|нахуй|ебать|заебал|хуйня": [
         "Ого, эмоции! Что случилось? 🤬",
         "Выпускай пар! 😤",
         "Что разозлило? 🔥",
         "Бывает! Рассказывай! 😅"
     ],
-    r"\b(кто самый|кто тут самый|назови самого)\b": [
+    r"кто самый|кто тут самый|назови самого": [
         "🤔 Хмм... Мне кажется это @{username}! 😏",
         "🔮 Я вижу ауру... Это @{username}! 😂",
         "📊 По моим подсчётам — @{username}! 💀",
@@ -344,10 +317,7 @@ words = {
     ],
 }
 
-# ============================================
 # КОМАНДЫ
-# ============================================
-
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     if msg.chat.type == ChatType.PRIVATE:
@@ -405,10 +375,7 @@ async def cmd_stats(msg: Message):
         f"🔇 В муте: <b>{len(muted_users)}</b>"
     )
 
-# ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК
-# ============================================
-
 @dp.message(F.text)
 async def handle_all_text(msg: Message):
     if msg.from_user.is_bot or not msg.text:
@@ -474,45 +441,44 @@ async def handle_all_text(msg: Message):
     for pattern, responses in words.items():
         if re.search(pattern, text):
             response = random.choice(responses)
-            
-            # Заменяем {username} на случайного из статистики
+
+            # Замена {username} на случайного из ВСЕХ участников
             if "{username}" in response:
-    try:
-        # Получаем ВСЕХ участников чата (кроме ботов)
-        all_members = []
-        # Сначала пробуем получить всех участников
-        try:
-            # Получаем администраторов (они точно есть)
-            admins = await bot.get_chat_administrators(msg.chat.id)
-            for admin in admins:
-                if not admin.user.is_bot:
-                    all_members.append(admin.user)
-        except:
-            pass
-        
-        # Добавляем пользователей из статистики, кого нет в админах
-        for uid, info in stats.get("users", {}).items():
-            try:
-                uid_int = int(uid)
-                if uid_int not in [m.id for m in all_members]:
-                    # Пробуем получить инфу о пользователе
-                    try:
-                        member = await bot.get_chat_member(msg.chat.id, uid_int)
-                        if member and not member.user.is_bot:
-                            all_members.append(member.user)
-                    except:
-                        pass
-            except:
-                pass
-        
-        if all_members:
-            random_user = random.choice(all_members)
-            random_name = f"@{random_user.username}" if random_user.username else random_user.first_name
-            response = response.replace("{username}", random_name)
-        else:
-            response = response.replace("{username}", "кто-то из чата")
-    except:
-        response = response.replace("{username}", "кто-то из чата")
+                try:
+                    all_users = []
+
+                    # Собираем всех из статистики (кто писал)
+                    for uid_str, info in stats.get("users", {}).items():
+                        try:
+                            uid = int(uid_str)
+                            name = info.get("username", f"ID{uid}")
+                            all_users.append({"id": uid, "name": name})
+                        except:
+                            pass
+
+                    # Если мало — добавляем админов
+                    if len(all_users) < 2:
+                        try:
+                            admins = await bot.get_chat_administrators(msg.chat.id)
+                            for admin in admins:
+                                if not admin.user.is_bot and admin.user.id not in [u["id"] for u in all_users]:
+                                    name = f"@{admin.user.username}" if admin.user.username else admin.user.first_name
+                                    all_users.append({"id": admin.user.id, "name": name})
+                        except:
+                            pass
+
+                    if all_users:
+                        random_user = random.choice(all_users)
+                        response = response.replace("{username}", random_user["name"])
+                    else:
+                        response = response.replace("{username}", "неизвестный")
+                except:
+                    response = response.replace("{username}", "кто-то из чата")
+
+            await safe_send(msg, response)
+            stats["messages_answered"] += 1
+            save_data()
+            return
 
     # РАНДОМ
     if random.random() < 0.15:
@@ -529,18 +495,12 @@ async def handle_all_text(msg: Message):
 
     save_data()
 
-# ============================================
 # ЗАГЛУШКА
-# ============================================
-
 @dp.message()
 async def catch_all(msg: Message):
     pass
 
-# ============================================
 # ЗАПУСК
-# ============================================
-
 async def main():
     load_data()
     asyncio.create_task(auto_save())
