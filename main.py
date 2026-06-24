@@ -24,7 +24,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 DATA_FILE = "palych_data.json"
 
