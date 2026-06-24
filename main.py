@@ -474,20 +474,22 @@ async def handle_all_text(msg: Message):
     for pattern, responses in words.items():
         if re.search(pattern, text):
             response = random.choice(responses)
-            
-            # Заменяем {username} на случайного участника
+
+
             if "{username}" in response:
-                try:
-                    admins = await bot.get_chat_administrators(msg.chat.id)
-                    users = [a.user for a in admins if not a.user.is_bot]
-                    if users:
-                        random_user = random.choice(users)
-                        random_name = f"@{random_user.username}" if random_user.username else random_user.first_name
-                        response = response.replace("{username}", random_name)
-                    else:
-                        response = response.replace("{username}", "неизвестный")
-                except:
-                    response = response.replace("{username}", "кто-то из чата")
+    try:
+        # Берём ВСЕХ пользователей из статистики (кто хоть раз писал)
+        all_users = list(stats.get("users", {}).items())
+        
+        if all_users:
+            # Выбираем случайного
+            random_uid, random_info = random.choice(all_users)
+            random_name = random_info.get("username", f"ID{random_uid}")
+            response = response.replace("{username}", random_name)
+        else:
+            response = response.replace("{username}", "некто неизвестный")
+    except:
+        response = response.replace("{username}", "кто-то из чата")
             
             await safe_send(msg, response)
             stats["messages_answered"] += 1
