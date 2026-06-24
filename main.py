@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 10.0 - Финальная
+Версия: 11.0 - Финальная
 """
 
 import asyncio
@@ -316,18 +316,18 @@ words = {
         "Отпуск! 🧳"
     ],
     r"\b(что делаешь|чем занят|что творишь|что случилось|что стряслось)\b": [
-        "Да так, сижу в интернете, чат оживляю! А ты чем занят? 💻",
+        "Да так, сижу в интернете, чат оживляю! А ты? 💻",
         "Общаюсь с тобой! Это моё любимое занятие! 😊",
         "Да вот, мемасы смотрю 😂 А ты что делаешь? 📱",
         "Работаю над собой! Прокачиваю скиллы! 💪",
         "Развлекаю народ! Это моя миссия! 🎭"
     ],
     r"\b(пошёл нахуй|иди нахуй|пошел нахуй|заткнись|завали|отъебись|отвали|съеби)\b": [
-        "Сам иди нахуй, козёл! Я тут чат веселю! 🖕",
-        "Рот закрой, животное! Я Палыч! 😤",
-        "Ты на кого бочку катишь? Я тут главный! 🤬",
-        "Слышь, рамсы попутал? Я бот с характером! 😡",
-        "Чё развыступался? Иди лесом! 🌲",
+        "Сам иди нахуй, козёл! 🖕",
+        "Рот закрой, животное! 😤",
+        "Ты на кого бочку катишь? 🤬",
+        "Слышь, рамсы попутал? 😡",
+        "Чё развыступался? 🌲",
         "Ты походу берега попутал! 💀"
     ],
     r"\b(блять|сука|хуй|пизда|пиздец|нахуй|ебать|заебал|хуйня)\b": [
@@ -474,22 +474,16 @@ async def handle_all_text(msg: Message):
     for pattern, responses in words.items():
         if re.search(pattern, text):
             response = random.choice(responses)
-
-
+            
+            # Заменяем {username} на случайного из статистики
             if "{username}" in response:
-    try:
-        # Берём ВСЕХ пользователей из статистики (кто хоть раз писал)
-        all_users = list(stats.get("users", {}).items())
-        
-        if all_users:
-            # Выбираем случайного
-            random_uid, random_info = random.choice(all_users)
-            random_name = random_info.get("username", f"ID{random_uid}")
-            response = response.replace("{username}", random_name)
-        else:
-            response = response.replace("{username}", "некто неизвестный")
-    except:
-        response = response.replace("{username}", "кто-то из чата")
+                all_users = list(stats.get("users", {}).items())
+                if all_users:
+                    random_uid, random_info = random.choice(all_users)
+                    random_name = random_info.get("username", f"ID{random_uid}")
+                    response = response.replace("{username}", random_name)
+                else:
+                    response = response.replace("{username}", "некто неизвестный")
             
             await safe_send(msg, response)
             stats["messages_answered"] += 1
