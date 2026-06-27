@@ -1,6 +1,6 @@
 """
 Палыч - весёлый чат-бот
-Версия: 21.0 - Эмодзи только в топе/статистике/жалобе
+Версия: 23.0 - Приветствие бота работает
 """
 
 import asyncio
@@ -11,8 +11,8 @@ import os
 import json
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated, ChatPermissions
+from aiogram.filters import Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions
 from aiogram.enums import ParseMode, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
@@ -119,19 +119,87 @@ async def check_mutes():
         if to_unmute:
             save_data()
 
+# ============================================
 # ПРИВЕТСТВИЕ И ПРОЩАНИЕ
-@dp.chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
-async def on_user_join(event: ChatMemberUpdated):
-    chat_id = event.chat.id
-    user = event.new_chat_member.user
-    username = user.username or user.first_name
+# ============================================
+
+@dp.message(F.new_chat_members)
+async def on_user_join(msg: Message):
+    """Приветствие новых участников"""
+    chat_id = msg.chat.id
     cid = str(chat_id)
     if cid not in stats["chats"]:
         stats["chats"].append(cid)
         save_data()
     
-    if user.id == bot.id:
-        await asyncio.sleep(0.5)
+    for user in msg.new_chat_members:
+        username = user.username or user.first_name
+        
+        if user.id == bot.id:
+            await asyncio.sleep(0.5)
+            await bot.send_message(chat_id,
+                "<b>ПАЛЫЧ В ЧАТЕ!</b>\n\n"
+                "Ну че, пацаны и девчонки!\n"
+                "Я Палыч, буду следить за порядком.\n\n"
+                "Отвечаю на кучу слов.\n"
+                "Могу и по делу сказать, и матом покрыть.\n"
+                "Кого надо - замучу.\n\n"
+                "Команды: /help\n"
+                "Жалоба: ответь на сообщение и напиши 'меня обидел'\n\n"
+                "Ну че, погнали."
+            )
+            continue
+        
+        welcome_text = welcome_settings.get(cid)
+        if welcome_text:
+            text = welcome_text.replace('{username}', f'@{username}' if user.username else username)
+        else:
+            w = [
+                f"О, {username}! Заходи, не стесняйся. Рассказывай кто такой.",
+                f"{username} залетел в чат! Прячьте печеньки.",
+                f"Гляньте, {username} пришёл. Ну и откуда ты?",
+                f"{username} на радарах. Всем стоять. Ты кто?",
+                f"Ну здорова, {username}. Как жизнь? Че нового?",
+                f"Бац! {username} телепортировался. Ты маг что ли?",
+                f"Ого, {username}! А мы тебя ждали. Где шлялся?",
+                f"Салют, {username}. Будь как дома, но не борзей."
+            ]
+            text = random.choice(w)
+        await asyncio.sleep(0.3)
+        await bot.send_message(chat_id, text)
+
+@dp.message(F.left_chat_member)
+async def on_user_leave(msg: Message):
+    """Прощание с ушедшими"""
+    if msg.left_chat_member.id == bot.id:
+        return
+    username = msg.left_chat_member.username or msg.left_chat_member.first_name
+    cid = str(msg.chat.id)
+    goodbye_text = goodbye_settings.get(cid)
+    if goodbye_text:
+        text = goodbye_text.replace('{username}', f'@{username}' if msg.left_chat_member.username else username)
+    else:
+        f_list = [
+            f"Эх, {username} ушёл... Возвращайся.",
+            f"{username} покинул чат. Свободу попугаям.",
+            f"Прощай, {username}. Скучно без тебя будет.",
+            f"{username} слился. Потеря для чата.",
+            f"Пока, {username}. Заходи если че."
+        ]
+        text = random.choice(f_list)
+    await bot.send_message(msg.chat.id, text)
+
+@dp.my_chat_member()
+async def on_bot_added(event):
+    """Срабатывает когда бота добавляют в чат"""
+    if event.new_chat_member.status in ['member', 'administrator']:
+        chat_id = event.chat.id
+        cid = str(chat_id)
+        if cid not in stats["chats"]:
+            stats["chats"].append(cid)
+            save_data()
+        
+        await asyncio.sleep(1)
         await bot.send_message(chat_id,
             "<b>ПАЛЫЧ В ЧАТЕ!</b>\n\n"
             "Ну че, пацаны и девчонки!\n"
@@ -143,49 +211,11 @@ async def on_user_join(event: ChatMemberUpdated):
             "Жалоба: ответь на сообщение и напиши 'меня обидел'\n\n"
             "Ну че, погнали."
         )
-        return
-    
-    welcome_text = welcome_settings.get(cid)
-    if welcome_text:
-        text = welcome_text.replace('{username}', f'@{username}' if user.username else username)
-    else:
-        w = [
-            f"О, {username}! Заходи, не стесняйся. Рассказывай кто такой.",
-            f"{username} залетел в чат! Прячьте печеньки.",
-            f"Гляньте, {username} пришёл. Ну и откуда ты?",
-            f"{username} на радарах. Всем стоять. Ты кто?",
-            f"Ну здорова, {username}. Как жизнь? Че нового?",
-            f"Бац! {username} телепортировался. Ты маг что ли?",
-            f"Ого, {username}! А мы тебя ждали. Где шлялся?",
-            f"Салют, {username}. Будь как дома, но не борзей."
-        ]
-        text = random.choice(w)
-    await asyncio.sleep(0.3)
-    await bot.send_message(chat_id, text)
 
-@dp.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
-async def on_user_leave(event: ChatMemberUpdated):
-    chat_id = event.chat.id
-    user = event.old_chat_member.user
-    if user.id == bot.id:
-        return
-    username = user.username or user.first_name
-    cid = str(chat_id)
-    goodbye_text = goodbye_settings.get(cid)
-    if goodbye_text:
-        text = goodbye_text.replace('{username}', f'@{username}' if user.username else username)
-    else:
-        f_list = [
-            f"Эх, {username} ушёл... Возвращайся.",
-            f"{username} покинул чат. Свободу попугаям.",
-            f"Прощай, {username}. Скучно без тебя будет.",
-            f"{username} слился. Потеря для чата.",
-            f"Пока, {username}. Заходи если че."
-        ]
-        text = random.choice(f_list)
-    await bot.send_message(chat_id, text)
-
+# ============================================
 # ТРИГГЕРЫ
+# ============================================
+
 words = {
     # Да/Нет
     r"^(да|даа|ага|угу|yes|ок|окей|хорошо|ладно|конечно|разумеется|точно|именно)[!?.]*$": [
@@ -419,7 +449,10 @@ words = {
     ],
 }
 
+# ============================================
 # КОМАНДЫ
+# ============================================
+
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     if msg.chat.type == ChatType.PRIVATE:
@@ -479,7 +512,10 @@ async def cmd_stats(msg: Message):
         f"🔇 В муте: <b>{len(muted_users)}</b>"
     )
 
+# ============================================
 # ОСНОВНОЙ ОБРАБОТЧИК
+# ============================================
+
 @dp.message(F.text)
 async def handle_all_text(msg: Message):
     if msg.from_user.is_bot or not msg.text:
@@ -511,7 +547,7 @@ async def handle_all_text(msg: Message):
         ]
         await safe_send(msg, random.choice(link_reactions))
 
-    # ЖАЛОБА (с эмодзи)
+    # ЖАЛОБА
     if msg.reply_to_message and re.search(r"(меня\s+обидел|обидел\s+меня|жалоба|накажи)", text):
         offender = msg.reply_to_message.from_user
         complainant_id = msg.from_user.id
@@ -612,19 +648,25 @@ async def handle_all_text(msg: Message):
 
     save_data()
 
+# ============================================
 # ЗАГЛУШКА
+# ============================================
+
 @dp.message()
 async def catch_all(msg: Message):
     pass
 
+# ============================================
 # ЗАПУСК
+# ============================================
+
 async def main():
     load_data()
     asyncio.create_task(auto_save())
     asyncio.create_task(check_mutes())
     logger.info("Палыч запускается...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot, allowed_updates=["message", "chat_member"])
+    await dp.start_polling(bot, allowed_updates=["message", "chat_member", "my_chat_member"])
 
 if __name__ == "__main__":
     try:
